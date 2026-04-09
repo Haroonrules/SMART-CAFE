@@ -3,8 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { MenuScreen } from './screens/MenuScreen';
 import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminOrdersScreen } from './screens/AdminOrdersScreen';
-import { AdminInventoryScreen } from './screens/AdminInventoryScreen';
 import { AdminStaffScreen } from './screens/AdminStaffScreen';
+import { AdminInsightsScreen } from './screens/AdminInsightsScreen';
 import { AdminLoginScreen } from './screens/AdminLoginScreen';
 import { CartScreen } from './screens/CartScreen';
 import { OrdersScreen } from './screens/OrdersScreen';
@@ -52,9 +52,9 @@ function App() {
                   {/* Admin Routes */}
                   <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
                   <Route path="/admin/dashboard" element={<ProtectedRoute requireAdmin><AdminDashboardScreen /></ProtectedRoute>} />
-                  <Route path="/admin/orders" element={<ProtectedRoute requireAdmin><AdminOrdersScreen /></ProtectedRoute>} />
-                  <Route path="/admin/inventory" element={<ProtectedRoute requireAdmin><AdminInventoryScreen /></ProtectedRoute>} />
+                  <Route path="/admin/orders" element={<ProtectedRoute><AdminOrdersScreen /></ProtectedRoute>} />
                   <Route path="/admin/staff" element={<ProtectedRoute requireAdmin><AdminStaffScreen /></ProtectedRoute>} />
+                  <Route path="/admin/insights" element={<ProtectedRoute requireAdmin><AdminInsightsScreen /></ProtectedRoute>} />
                   
                   {/* Catch All */}
                   <Route path="*" element={<Navigate to="/" replace />} />

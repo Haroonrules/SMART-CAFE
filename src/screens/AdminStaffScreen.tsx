@@ -1,57 +1,202 @@
-import React, { useState } from 'react';
-import { Plus, Search, User, Mail, Phone, Calendar, Clock, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus, Search, User, Mail, Shield, Crown, ChefHat, X, Loader2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase';
+import { toast } from 'sonner';
 
-const INITIAL_STAFF = [
-  { id: 'stf-001', name: 'Chef Marco Rossi', role: 'Head Chef', email: 'marco@smartcafe.com', phone: '+1 234 567 8901', status: 'On Duty', shift: 'Morning', avatar: 'https://picsum.photos/seed/marco/200/200' },
-  { id: 'stf-002', name: 'Sarah Chen', role: 'Lead Barista', email: 'sarah@smartcafe.com', phone: '+1 234 567 8902', status: 'On Duty', shift: 'Morning', avatar: 'https://picsum.photos/seed/sarah/200/200' },
-  { id: 'stf-003', name: 'Alex Rivera', role: 'Barista', email: 'alex@smartcafe.com', phone: '+1 234 567 8903', status: 'Off Duty', shift: 'Evening', avatar: 'https://picsum.photos/seed/alex/200/200' },
-  { id: 'stf-004', name: 'Elena Gilbert', role: 'Server', email: 'elena@smartcafe.com', phone: '+1 234 567 8904', status: 'On Duty', shift: 'Morning', avatar: 'https://picsum.photos/seed/elena/200/200' },
-  { id: 'stf-005', name: 'Marcus Thorne', role: 'Sommelier', email: 'marcus@smartcafe.com', phone: '+1 234 567 8905', status: 'Off Duty', shift: 'Evening', avatar: 'https://picsum.photos/seed/marcus/200/200' },
-];
+interface StaffMember {
+  uid: string;
+  email: string;
+  display_name: string;
+  display_role: string;
+  system_role: 'admin' | 'kitchen' | 'staff';
+  is_on_duty: boolean;
+  photo_url?: string;
+}
 
 export function AdminStaffScreen() {
-  const [staff, setStaff] = useState(INITIAL_STAFF);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   
   const [newMember, setNewMember] = useState({
-    name: '',
-    role: 'Barista',
     email: '',
-    phone: '',
-    shift: 'Morning',
-    avatar: 'https://picsum.photos/seed/newstaff/200/200'
+    display_name: '',
+    display_role: 'Server',
+    system_role: 'staff' as 'admin' | 'kitchen' | 'staff'
   });
 
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const fetchedStaff = snapshot.docs.map(doc => ({
+        uid: doc.id,
+        ...doc.data()
+      })) as StaffMember[];
+      // Filter out regular customers (only show staff/admin/kitchen)
+      const staffOnly = fetchedStaff.filter(s => 
+        s.system_role === 'admin' || s.system_role === 'kitchen' || s.display_role
+      );
+      setStaff(staffOnly);
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching staff:', error);
+      toast.error('Failed to load staff members');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   const filteredStaff = staff.filter(s => {
-    const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         s.role.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = s.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         s.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         s.display_role?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
 
-  const toggleStatus = (id: string) => {
-    setStaff(prev => prev.map(s => 
-      s.id === id ? { ...s, status: s.status === 'On Duty' ? 'Off Duty' : 'On Duty' } : s
-    ));
+  const handlePromote = async (uid: string, newRole: 'admin' | 'kitchen') => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not authenticated');
+
+      const token = await user.getIdToken();
+      const response = await fetch('/api/admin/staff/role', {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ uid, system_role: newRole })
+      });
+
+      if (!response.ok) throw new Error('Failed to update role');
+      toast.success(`User promoted to ${newRole.toUpperCase()}`);
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Error updating user role');
+    }
   };
 
-  const handleAddMember = (e: React.FormEvent) => {
-    e.preventDefault();
-    const member = {
-      id: `stf-${Date.now()}`,
-      name: newMember.name,
-      role: newMember.role,
-      email: newMember.email,
-      phone: newMember.phone,
-      status: 'Off Duty',
-      shift: newMember.shift,
-      avatar: newMember.avatar || `https://picsum.photos/seed/${newMember.name}/200/200`
-    };
-    setStaff([member, ...staff]);
-    setShowAddModal(false);
-    setNewMember({ name: '', role: 'Barista', email: '', phone: '', shift: 'Morning', avatar: 'https://picsum.photos/seed/newstaff/200/200' });
+  const handleDemote = async (uid: string) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not authenticated');
+
+      const token = await user.getIdToken();
+      const response = await fetch('/api/admin/staff/role', {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ uid, system_role: 'staff' })
+      });
+
+      if (!response.ok) throw new Error('Failed to update role');
+      toast.success('User demoted to staff');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Error updating user role');
+    }
   };
+
+  const handleRemove = async (uid: string, email: string) => {
+    if (!confirm(`Are you sure you want to remove ${email}?`)) return;
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not authenticated');
+
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/admin/staff/${uid}`, {
+        method: 'DELETE',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) throw new Error('Failed to remove staff');
+      toast.success('Staff member removed');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Error removing staff member');
+    }
+  };
+
+  const toggleDutyStatus = async (uid: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        is_on_duty: !currentStatus
+      });
+      toast.success(currentStatus ? 'Marked as off duty' : 'Marked as on duty');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Error updating duty status');
+    }
+  };
+
+  const handleAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not authenticated');
+
+      const token = await user.getIdToken();
+      const response = await fetch('/api/admin/promote', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          email: newMember.email,
+          system_role: newMember.system_role,
+          display_role: newMember.display_role
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to add staff member');
+      
+      toast.success('Staff member added successfully!');
+      setShowAddModal(false);
+      setNewMember({ email: '', display_name: '', display_role: 'Server', system_role: 'staff' });
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Error adding staff member');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const getRoleIcon = (role: string) => {
+    switch (role) {
+      case 'admin': return <Crown size={20} className="text-purple-600" />;
+      case 'kitchen': return <ChefHat size={20} className="text-orange-600" />;
+      default: return <Shield size={20} className="text-blue-600" />;
+    }
+  };
+
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'admin': return 'bg-purple-50 text-purple-700 border-purple-200';
+      case 'kitchen': return 'bg-orange-50 text-orange-700 border-orange-200';
+      default: return 'bg-blue-50 text-blue-700 border-blue-200';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="ml-64 p-10 flex items-center justify-center min-h-screen">
+        <Loader2 className="animate-spin text-primary" size={48} />
+      </div>
+    );
+  }
 
   return (
     <main className="ml-64 p-10 bg-surface-container-lowest min-h-screen">
@@ -66,7 +211,7 @@ export function AdminStaffScreen() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="bg-stone-50 border border-stone-200 rounded-xl py-3 pl-12 pr-6 w-80 font-body text-sm outline-none focus:border-primary transition-colors" 
-              placeholder="Search staff, roles..." 
+              placeholder="Search staff..." 
             />
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400" size={18} />
           </div>
@@ -80,204 +225,236 @@ export function AdminStaffScreen() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-12">
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         <div className="bg-white rounded-3xl p-8 border border-stone-200/30 shadow-sm">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <User size={24} />
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center">
+              <Crown size={24} />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">Total Staff</p>
-              <p className="text-2xl font-headline text-primary font-bold">{staff.length} Members</p>
+              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">Admins</p>
+              <p className="text-2xl font-headline text-primary font-bold">{staff.filter(s => s.system_role === 'admin').length}</p>
             </div>
-          </div>
-          <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(staff.length / 30) * 100}%` }} />
           </div>
         </div>
         <div className="bg-white rounded-3xl p-8 border border-stone-200/30 shadow-sm">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Clock size={24} />
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center">
+              <ChefHat size={24} />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">On Duty Now</p>
-              <p className="text-2xl font-headline text-primary font-bold">{staff.filter(s => s.status === 'On Duty').length} Active</p>
+              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">Kitchen Staff</p>
+              <p className="text-2xl font-headline text-primary font-bold">{staff.filter(s => s.system_role === 'kitchen').length}</p>
             </div>
           </div>
-          <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
-            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(staff.filter(s => s.status === 'On Duty').length / staff.length) * 100}%` }} />
+        </div>
+        <div className="bg-white rounded-3xl p-8 border border-stone-200/30 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <User size={24} />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">On Duty</p>
+              <p className="text-2xl font-headline text-primary font-bold">{staff.filter(s => s.is_on_duty).length}</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {filteredStaff.map(member => (
-          <motion.div 
-            key={member.id}
-            whileHover={{ y: -5 }}
-            className="bg-white rounded-3xl border border-stone-200/30 shadow-sm overflow-hidden group"
+      {/* Staff Grid */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        {filteredStaff.map((member) => (
+          <motion.div
+            key={member.uid}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white rounded-3xl p-6 border border-stone-200/30 shadow-sm hover:shadow-md transition-shadow"
           >
-            <div className="p-8">
-              <div className="flex justify-between items-start mb-6">
-                <div className="relative">
-                  <img 
-                    src={member.avatar} 
-                    className="w-20 h-20 rounded-2xl object-cover" 
-                    referrerPolicy="no-referrer" 
-                  />
-                  <div className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full border-4 border-white ${
-                    member.status === 'On Duty' ? 'bg-emerald-500' : 'bg-stone-300'
-                  }`} />
-                </div>
+            <div className="flex items-start gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-stone-100 overflow-hidden flex-shrink-0">
+                {member.photo_url ? (
+                  <img src={member.photo_url} alt={member.display_name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-stone-400">
+                    <User size={32} />
+                  </div>
+                )}
               </div>
               
-              <div className="mb-6">
-                <h3 className="text-2xl font-headline text-primary font-bold mb-1">{member.name}</h3>
-                <span className="text-xs font-label uppercase tracking-widest text-stone-400">{member.role}</span>
-              </div>
-
-              <div className="space-y-4 pt-6 border-t border-stone-50">
-                <div className="flex items-center gap-3 text-sm text-stone-500">
-                  <Mail size={16} className="text-stone-300" />
-                  {member.email}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-headline text-lg text-primary font-bold truncate">{member.display_name || 'Unknown'}</h3>
+                    <p className="text-sm text-stone-500 truncate">{member.email}</p>
+                  </div>
+                  <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-label uppercase tracking-widest ${getRoleColor(member.system_role)}`}>
+                    {getRoleIcon(member.system_role)}
+                    {member.system_role}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-sm text-stone-500">
-                  <Phone size={16} className="text-stone-300" />
-                  {member.phone}
-                </div>
-                <div className="flex items-center gap-3 text-sm text-stone-500">
-                  <Calendar size={16} className="text-stone-300" />
-                  {member.shift} Shift
+                
+                {member.display_role && member.display_role !== member.system_role && (
+                  <p className="text-xs text-stone-400 mt-1">Display Role: {member.display_role}</p>
+                )}
+                
+                <div className="flex items-center gap-2 mt-3">
+                  <div className={`w-2 h-2 rounded-full ${member.is_on_duty ? 'bg-emerald-500' : 'bg-stone-300'}`} />
+                  <span className="text-xs text-stone-500 uppercase tracking-widest">
+                    {member.is_on_duty ? 'On Duty' : 'Off Duty'}
+                  </span>
                 </div>
               </div>
             </div>
-            
-            <div className="px-8 py-4 bg-stone-50/50 flex justify-between items-center">
-              <span className={`text-[10px] font-label uppercase tracking-widest font-bold ${
-                member.status === 'On Duty' ? 'text-emerald-600' : 'text-stone-400'
-              }`}>
-                {member.status}
-              </span>
-              <button 
-                onClick={() => toggleStatus(member.id)}
-                className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
-                  member.status === 'On Duty' 
-                  ? 'bg-stone-200 text-stone-600 hover:bg-stone-300' 
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-600/10'
+
+            {/* Actions */}
+            <div className="mt-6 pt-4 border-t border-stone-100 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => toggleDutyStatus(member.uid, member.is_on_duty)}
+                className={`py-2 rounded-xl font-label text-xs uppercase tracking-widest transition-colors ${
+                  member.is_on_duty 
+                    ? 'bg-stone-100 text-stone-600 hover:bg-stone-200' 
+                    : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
                 }`}
               >
-                {member.status === 'On Duty' ? 'Set Off Duty' : 'Set On Duty'}
+                {member.is_on_duty ? 'Clock Out' : 'Clock In'}
+              </button>
+              
+              {member.system_role !== 'admin' && (
+                <button
+                  onClick={() => handlePromote(member.uid, member.system_role === 'kitchen' ? 'admin' : 'kitchen')}
+                  className="py-2 bg-primary/10 text-primary rounded-xl font-label text-xs uppercase tracking-widest hover:bg-primary/20 transition-colors"
+                >
+                  Promote to {member.system_role === 'kitchen' ? 'Admin' : 'Kitchen'}
+                </button>
+              )}
+              
+              {member.system_role !== 'staff' && (
+                <button
+                  onClick={() => handleDemote(member.uid)}
+                  className="py-2 bg-stone-100 text-stone-600 rounded-xl font-label text-xs uppercase tracking-widest hover:bg-stone-200 transition-colors"
+                >
+                  Demote to Staff
+                </button>
+              )}
+              
+              <button
+                onClick={() => handleRemove(member.uid, member.email)}
+                className="py-2 bg-red-50 text-red-600 rounded-xl font-label text-xs uppercase tracking-widest hover:bg-red-100 transition-colors"
+              >
+                Remove
               </button>
             </div>
           </motion.div>
         ))}
       </div>
 
+      {filteredStaff.length === 0 && (
+        <div className="text-center py-20">
+          <AlertCircle className="mx-auto text-stone-300 mb-4" size={48} />
+          <p className="text-stone-400 font-label uppercase tracking-widest">No staff members found</p>
+        </div>
+      )}
+
       {/* Add Member Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
               onClick={() => setShowAddModal(false)}
-              className="absolute inset-0 bg-primary/20 backdrop-blur-sm"
             />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-[2.5rem] p-10 shadow-2xl"
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl"
             >
-              <button 
-                onClick={() => setShowAddModal(false)}
-                className="absolute top-8 right-8 p-2 hover:bg-stone-50 rounded-full transition-colors"
-              >
-                <X size={20} className="text-stone-400" />
-              </button>
-              
-              <h2 className="text-3xl font-headline text-primary mb-8 italic">Add Team Member</h2>
-              
-              <form onSubmit={handleAddMember} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Full Name</label>
-                  <input 
-                    required
-                    value={newMember.name}
-                    onChange={e => setNewMember({...newMember, name: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="e.g. John Doe"
-                  />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Role</label>
-                    <select 
-                      value={newMember.role}
-                      onChange={e => setNewMember({...newMember, role: e.target.value})}
-                      className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    >
-                      <option>Barista</option>
-                      <option>Chef</option>
-                      <option>Server</option>
-                      <option>Sommelier</option>
-                      <option>Manager</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Shift</label>
-                    <select 
-                      value={newMember.shift}
-                      onChange={e => setNewMember({...newMember, shift: e.target.value})}
-                      className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    >
-                      <option>Morning</option>
-                      <option>Afternoon</option>
-                      <option>Evening</option>
-                      <option>Night</option>
-                    </select>
-                  </div>
-                </div>
+              <div className="p-6 border-b border-stone-200 flex justify-between items-center">
+                <h2 className="text-2xl font-headline text-primary">Add Staff Member</h2>
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="p-2 hover:bg-stone-100 rounded-full transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Email Address</label>
-                  <input 
-                    required
+              <form onSubmit={handleAddMember} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Email *</label>
+                  <input
                     type="email"
                     value={newMember.email}
-                    onChange={e => setNewMember({...newMember, email: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="john@smartcafe.com"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Phone Number</label>
-                  <input 
+                    onChange={(e) => setNewMember(prev => ({ ...prev, email: e.target.value }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                    placeholder="staff@smartcafe.com"
                     required
-                    value={newMember.phone}
-                    onChange={e => setNewMember({...newMember, phone: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="+1 234 567 8900"
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Avatar URL</label>
-                  <input 
-                    value={newMember.avatar}
-                    onChange={e => setNewMember({...newMember, avatar: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="https://picsum.photos/..."
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Display Name</label>
+                  <input
+                    type="text"
+                    value={newMember.display_name}
+                    onChange={(e) => setNewMember(prev => ({ ...prev, display_name: e.target.value }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                    placeholder="John Doe"
                   />
                 </div>
 
-                <button className="w-full bg-primary text-white py-5 rounded-2xl font-bold uppercase tracking-widest shadow-xl shadow-primary/20 mt-4 hover:scale-[1.01] active:scale-95 transition-all">
-                  Add to Directory
-                </button>
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">System Role *</label>
+                  <select
+                    value={newMember.system_role}
+                    onChange={(e) => setNewMember(prev => ({ ...prev, system_role: e.target.value as any }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                    required
+                  >
+                    <option value="staff">Staff (No Privileges)</option>
+                    <option value="kitchen">Kitchen Staff (Live Order Editors)</option>
+                    <option value="admin">Admin (Full Access)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Display Role</label>
+                  <input
+                    type="text"
+                    value={newMember.display_role}
+                    onChange={(e) => setNewMember(prev => ({ ...prev, display_role: e.target.value }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                    placeholder="e.g., Server, Barista, Chef"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="flex-1 border border-stone-200 text-stone-600 py-3 rounded-xl font-label text-sm uppercase tracking-widest hover:bg-stone-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex-1 bg-primary text-white py-3 rounded-xl font-label text-sm uppercase tracking-widest hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="animate-spin" size={18} />
+                        Adding...
+                      </>
+                    ) : (
+                      'Add Member'
+                    )}
+                  </button>
+                </div>
               </form>
             </motion.div>
           </div>

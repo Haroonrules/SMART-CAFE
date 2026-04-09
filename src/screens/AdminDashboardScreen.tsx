@@ -1,39 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Search, Sparkles, TrendingUp, Clock, AlertCircle, X, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Eye, EyeOff, X, Image as ImageIcon, Loader2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MenuItem, Order } from '../types';
-import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, query, orderBy, limit } from 'firebase/firestore';
-import { db, auth } from '../firebase';
-import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { MenuItem } from '../types';
+import { collection, onSnapshot, doc, updateDoc, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase';
 import { toast } from 'sonner';
-import { generateAdminInsights } from '../lib/ai';
-
-interface AuditLog {
-  id: string;
-  action: string;
-  item: string;
-  user: string;
-  createdAt: string;
-}
+import { auth } from '../firebase';
 
 export function AdminDashboardScreen() {
   const [items, setItems] = useState<MenuItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'available' | 'out-of-stock'>('all');
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showAuditLog, setShowAuditLog] = useState(false);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [insights, setInsights] = useState<{ sentiment: string, peakTime: string, insight: string } | null>(null);
-  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [showModal, setShowModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   
-  // New Item Form State - FIXED: image -> image_url
-  const [newItem, setNewItem] = useState({
+  // Form state
+  const [formData, setFormData] = useState({
     name: '',
     description: '',
     price: '',
     category: 'Coffee',
-    image_url: 'https://picsum.photos/seed/newitem/400/400'
+    image_url: '',
+    customizations: [] as Array<{ name: string; extra_price: number }>
   });
 
   useEffect(() => {
@@ -42,486 +32,531 @@ export function AdminDashboardScreen() {
         id: doc.id,
         ...doc.data()
       })) as MenuItem[];
-      setItems(fetchedItems); // FIXED: was setMenuItems (undefined function)
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const q = query(collection(db, 'orders'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedOrders = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Order[];
-      setOrders(fetchedOrders);
+      setItems(fetchedItems);
+      setLoading(false);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'orders');
+      console.error('Error fetching menu items:', error);
+      toast.error('Failed to load menu items');
+      setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (items.length > 0 && orders.length > 0 && !insights && !loadingInsights) {
-      setLoadingInsights(true);
-      generateAdminInsights(orders, items).then(data => {
-        setInsights(data);
-        setLoadingInsights(false);
-      }).catch(err => {
-        console.error("Failed to generate insights", err);
-        setLoadingInsights(false);
-      });
-    }
-  }, [items, orders, insights, loadingInsights]);
-
-  useEffect(() => {
-    const q = query(collection(db, 'auditLogs'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const logs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as AuditLog[];
-      
-      logs.sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA;
-      });
-      
-      setAuditLogs(logs);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'auditLogs');
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const logAction = async (action: string, itemName: string) => {
-    try {
-      await addDoc(collection(db, 'auditLogs'), {
-        action,
-        item: itemName,
-        user: auth.currentUser?.email || 'Admin',
-        createdAt: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Failed to log action', error);
-    }
-  };
-
-  const toggleAvailability = async (id: string) => {
-    const item = items.find(i => i.id === id);
-    if (!item) return;
-
-    const previousItems = [...items];
-    setItems(prev => prev.map(i => 
-      i.id === id ? { ...i, is_available: !i.is_available } : i
-    ));
-
-    try {
-      // FIXED: menuItems -> menu_items
-      await updateDoc(doc(db, 'menu_items', id), {
-        is_available: !item.is_available,
-        updatedAt: serverTimestamp()
-      });
-      toast.success(`Marked as ${!item.is_available ? 'Available' : 'Sold Out'}`);
-      logAction(!item.is_available ? 'Marked Available' : 'Marked Sold Out', item.name);
-    } catch (error) {
-      setItems(previousItems);
-      toast.error('Failed to update availability');
-      handleFirestoreError(error, OperationType.UPDATE, `menu_items/${id}`);
-    }
-  };
-
-  const softDelete = async (id: string) => {
-    const item = items.find(i => i.id === id);
-    if (!item) return;
-
-    try {
-      // FIXED: menuItems -> menu_items
-      await updateDoc(doc(db, 'menu_items', id), {
-        is_active: false,
-        updatedAt: serverTimestamp()
-      });
-      toast.success('Item removed from menu');
-      logAction('Removed Item', item.name);
-    } catch (error) {
-      toast.error('Failed to remove item');
-      handleFirestoreError(error, OperationType.UPDATE, `menu_items/${id}`);
-    }
-  };
 
   const filteredItems = items.filter(item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         item.description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const isAvailable = item.is_available !== false;
-    if (activeFilter === 'available') return matchesSearch && isAvailable;
-    if (activeFilter === 'out-of-stock') return matchesSearch && !isAvailable;
-    return matchesSearch;
+    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = categoryFilter === 'all' || item.category === categoryFilter;
+    return matchesSearch && matchesCategory;
   });
 
-  const handleAddItem = async (e: React.FormEvent) => {
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      description: '',
+      price: '',
+      category: 'Coffee',
+      image_url: '',
+      customizations: []
+    });
+    setEditingItem(null);
+  };
+
+  const handleOpenModal = (item?: MenuItem) => {
+    if (item) {
+      setEditingItem(item);
+      setFormData({
+        name: item.name,
+        description: item.description || '',
+        price: item.price.toString(),
+        category: item.category,
+        image_url: item.image_url || '',
+        customizations: item.customizations || []
+      });
+    } else {
+      resetForm();
+    }
+    setShowModal(true);
+  };
+
+  const handleAddCustomization = () => {
+    setFormData(prev => ({
+      ...prev,
+      customizations: [...prev.customizations, { name: '', extra_price: 0 }]
+    }));
+  };
+
+  const handleUpdateCustomization = (index: number, field: 'name' | 'extra_price', value: string | number) => {
+    setFormData(prev => ({
+      ...prev,
+      customizations: prev.customizations.map((cust, i) => 
+        i === index ? { ...cust, [field]: field === 'extra_price' ? parseFloat(value as string) || 0 : value } : cust
+      )
+    }));
+  };
+
+  const handleRemoveCustomization = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      customizations: prev.customizations.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!formData.name || !formData.price || !formData.category) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    setSubmitting(true);
+
     try {
-      await addDoc(collection(db, 'menu_items'), {
-        name: newItem.name,
-        description: newItem.description,
-        price: parseFloat(newItem.price),
-        category: newItem.category,
-        image_url: newItem.image_url, // FIXED: image -> image_url
-        customizations: [],
+      const user = auth.currentUser;
+      if (!user) {
+        console.error('No authenticated user found');
+        throw new Error('You must be logged in to edit menu items. Please log in again.');
+      }
+
+      console.log('Getting ID token for user:', user.email);
+      const token = await user.getIdToken();
+      console.log('Token obtained, length:', token.length);
+      
+      const itemData = {
+        name: formData.name,
+        description: formData.description,
+        price: parseFloat(formData.price),
+        category: formData.category,
+        image_url: formData.image_url || `https://picsum.photos/seed/${Date.now()}/400/400`,
+        customizations: formData.customizations,
         is_active: true,
         is_available: true,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-      setShowAddModal(false);
-      logAction('Added Item', newItem.name);
-      setNewItem({ name: '', description: '', price: '', category: 'Coffee', image_url: 'https://picsum.photos/seed/newitem/400/400' }); // FIXED
-      toast.success('Item added successfully');
-    } catch (error) {
-      toast.error('Failed to add item');
-      handleFirestoreError(error, OperationType.CREATE, 'menu_items'); // FIXED
+        updated_at: serverTimestamp()
+      };
+
+      let response;
+      if (editingItem) {
+        // Update existing item
+        console.log('Updating menu item:', editingItem.id);
+        response = await fetch(`/api/menu/${editingItem.id}`, {
+          method: 'PATCH',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(itemData)
+        });
+      } else {
+        // Add new item
+        console.log('Adding new menu item');
+        response = await fetch('/api/menu', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(itemData)
+        });
+      }
+
+      console.log('Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('API error:', errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      toast.success(editingItem ? 'Menu item updated successfully!' : 'Menu item added successfully!');
+      setShowModal(false);
+      resetForm();
+    } catch (error: any) {
+      console.error('Full error details:', error);
+      toast.error(error.message || (editingItem ? 'Error updating menu item' : 'Error adding menu item'));
+    } finally {
+      setSubmitting(false);
     }
   };
 
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+    
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        console.error('No authenticated user found');
+        throw new Error('You must be logged in to delete menu items.');
+      }
+
+      console.log('Deleting menu item:', id);
+      const token = await user.getIdToken();
+      
+      const response = await fetch(`/api/menu/${id}`, {
+        method: 'DELETE',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      console.log('Delete response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Delete API error:', errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+      
+      toast.success('Menu item deleted successfully!');
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      toast.error(error.message || 'Error deleting menu item');
+    }
+  };
+
+  const toggleAvailability = async (id: string, currentStatus: boolean) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        console.error('No authenticated user found during availability toggle');
+        throw new Error('Authentication required to update availability.');
+      }
+
+      console.log('Toggling availability for item:', id);
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/menu/${id}`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ is_available: !currentStatus })
+      });
+
+      console.log('Toggle availability response status:', response.status);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Toggle availability API error:', errorData);
+        throw new Error(errorData.error || 'Failed to update availability');
+      }
+      toast.success(currentStatus ? 'Item marked as unavailable' : 'Item marked as available');
+    } catch (error: any) {
+      console.error('Full toggle availability error details:', error);
+      toast.error(error.message || 'Error updating availability');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="ml-64 p-10 flex items-center justify-center min-h-screen">
+        <Loader2 className="animate-spin text-primary" size={48} />
+      </div>
+    );
+  }
+
   return (
-    <main className="lg:ml-64 p-6 lg:p-10 bg-surface-container-lowest min-h-screen pt-24 lg:pt-10">
-      <header className="flex flex-col md:flex-row md:justify-between md:items-end gap-6 mb-12">
+    <main className="ml-64 p-10 bg-surface-container-lowest min-h-screen">
+      <header className="flex justify-between items-end mb-12">
         <div>
-          <span className="text-[0.75rem] font-label tracking-[0.2em] text-stone-400 uppercase mb-2 block">Overview</span>
-          <h1 className="text-4xl lg:text-5xl font-headline text-primary">Menu Management</h1>
+          <span className="text-[0.75rem] font-label tracking-[0.2em] text-stone-400 uppercase mb-2 block">Menu Management</span>
+          <h1 className="text-5xl font-headline text-primary">Food & Beverages</h1>
         </div>
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative flex-1">
+        <div className="flex gap-4">
+          <div className="relative">
             <input 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-stone-50 border border-stone-200 rounded-xl py-3 pl-12 pr-6 w-full md:w-80 font-body text-sm outline-none focus:border-primary transition-colors" 
-              placeholder="Search dishes..." 
+              className="bg-stone-50 border border-stone-200 rounded-xl py-3 pl-12 pr-6 w-80 font-body text-sm outline-none focus:border-primary transition-colors" 
+              placeholder="Search menu items..." 
             />
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400" size={18} />
           </div>
           <button 
-            onClick={() => setShowAddModal(true)}
-            className="bg-primary text-white px-8 py-3 rounded-xl font-bold uppercase tracking-widest flex items-center justify-center gap-3 shadow-lg shadow-primary/10 hover:scale-[1.02] transition-transform"
+            onClick={() => handleOpenModal()}
+            className="bg-primary text-white px-8 py-3 rounded-xl font-bold uppercase tracking-widest flex items-center gap-3 shadow-lg shadow-primary/10 hover:scale-[1.02] transition-transform"
           >
             <Plus size={20} />
-            Add New Item
+            Add Item
           </button>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        {/* Main Content */}
-        <div className="lg:col-span-8 space-y-10">
-          <div className="bg-white rounded-3xl border border-stone-200/30 shadow-sm overflow-hidden">
-            <div className="px-8 py-6 border-b border-stone-100 flex justify-between items-center bg-stone-50/50">
-              <div className="flex gap-8">
-                <button 
-                  onClick={() => setActiveFilter('all')}
-                  className={`font-bold pb-1 text-sm uppercase tracking-widest transition-colors ${activeFilter === 'all' ? 'text-primary border-b-2 border-primary' : 'text-stone-400 hover:text-primary'}`}
+      {/* Category Filter */}
+      <div className="flex gap-3 mb-8">
+        {['all', 'Coffee', 'Tea', 'Food', 'Dessert'].map(cat => (
+          <button
+            key={cat}
+            onClick={() => setCategoryFilter(cat)}
+            className={`px-6 py-2 rounded-full font-label text-xs uppercase tracking-widest transition-all ${
+              categoryFilter === cat 
+                ? 'bg-primary text-white' 
+                : 'bg-white border border-stone-200 text-stone-500 hover:border-primary'
+            }`}
+          >
+            {cat === 'all' ? 'All Items' : cat}
+          </button>
+        ))}
+      </div>
+
+      {/* Menu Items Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {filteredItems.map((item) => (
+          <motion.div
+            key={item.id}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white rounded-3xl overflow-hidden border border-stone-200/30 shadow-sm hover:shadow-md transition-shadow"
+          >
+            <div className="relative h-48 bg-stone-100">
+              <img 
+                src={item.image_url || 'https://via.placeholder.com/400'} 
+                alt={item.name}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = 'https://via.placeholder.com/400';
+                }}
+              />
+              {!item.is_available && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                  <span className="bg-red-500 text-white px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest">
+                    Unavailable
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h3 className="font-headline text-xl text-primary font-bold">{item.name}</h3>
+                  <p className="text-xs uppercase tracking-widest text-stone-400 mt-1">{item.category}</p>
+                </div>
+                <p className="text-2xl font-headline text-secondary font-bold">${item.price.toFixed(2)}</p>
+              </div>
+              
+              {item.description && (
+                <p className="text-sm text-stone-500 mb-4 line-clamp-2">{item.description}</p>
+              )}
+              
+              {item.customizations && item.customizations.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs uppercase tracking-widest text-stone-400 mb-2">Customizations:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {item.customizations.map((cust, idx) => (
+                      <span key={idx} className="text-xs bg-stone-100 px-3 py-1 rounded-full text-stone-600">
+                        {cust.name} (+${cust.extra_price.toFixed(2)})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex gap-2 pt-4 border-t border-stone-100">
+                <button
+                  onClick={() => handleOpenModal(item)}
+                  className="flex-1 bg-stone-100 hover:bg-stone-200 text-primary py-2 rounded-xl font-label text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
                 >
-                  All Items
+                  <Edit size={14} />
+                  Edit
                 </button>
-                <button 
-                  onClick={() => setActiveFilter('available')}
-                  className={`font-bold pb-1 text-sm uppercase tracking-widest transition-colors ${activeFilter === 'available' ? 'text-primary border-b-2 border-primary' : 'text-stone-400 hover:text-primary'}`}
+                <button
+                  onClick={() => toggleAvailability(item.id, item.is_available ?? true)}
+                  className={`py-2 px-4 rounded-xl transition-colors ${
+                    item.is_available 
+                      ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' 
+                      : 'bg-red-50 text-red-600 hover:bg-red-100'
+                  }`}
+                  title={item.is_available ? 'Mark as unavailable' : 'Mark as available'}
                 >
-                  Available
+                  {item.is_available ? <Eye size={16} /> : <EyeOff size={16} />}
                 </button>
-                <button 
-                  onClick={() => setActiveFilter('out-of-stock')}
-                  className={`font-bold pb-1 text-sm uppercase tracking-widest transition-colors ${activeFilter === 'out-of-stock' ? 'text-primary border-b-2 border-primary' : 'text-stone-400 hover:text-primary'}`}
+                <button
+                  onClick={() => handleDelete(item.id, item.name)}
+                  className="py-2 px-4 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                  title="Delete item"
                 >
-                  Out of Stock
+                  <Trash2 size={16} />
                 </button>
               </div>
             </div>
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full min-w-[800px] lg:min-w-0">
-                <thead>
-                  <tr className="text-left border-b border-stone-100">
-                    <th className="px-8 py-5 font-label text-[10px] uppercase tracking-widest text-stone-400">Item Details</th>
-                    <th className="px-8 py-5 font-label text-[10px] uppercase tracking-widest text-stone-400">Category</th>
-                    <th className="px-8 py-5 font-label text-[10px] uppercase tracking-widest text-stone-400">Price</th>
-                    <th className="px-8 py-5 font-label text-[10px] uppercase tracking-widest text-stone-400 text-right">Status & Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-50">
-                  {filteredItems.map(item => (
-                    <tr key={item.id} className="hover:bg-stone-50/50 transition-colors group">
-                      <td className="px-8 py-5">
-                        <div className="flex items-center gap-4">
-                          <img 
-                            src={item.image_url || item.image || 'https://via.placeholder.com/100'} 
-                            className="w-12 h-12 rounded-lg object-cover" 
-                            referrerPolicy="no-referrer"
-                            onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/100'; }}
-                          />
-                          <div>
-                            <p className="font-headline text-primary font-bold">{item.name}</p>
-                            <p className="text-xs text-stone-400 truncate max-w-[200px]">{item.description}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-8 py-5">
-                        <span className="text-xs font-label uppercase tracking-widest text-stone-500 bg-stone-100 px-3 py-1 rounded-full">{item.category}</span>
-                      </td>
-                      <td className="px-8 py-5">
-                        <span className="font-headline text-primary">${item.price.toFixed(2)}</span>
-                      </td>
-                      <td className="px-8 py-5 text-right">
-                        <div className="flex items-center justify-end gap-6">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full ${item.is_available !== false ? 'bg-tertiary' : 'bg-error'}`}></div>
-                            <span className={`text-xs ${item.is_available !== false ? 'text-primary' : 'text-error font-bold'}`}>
-                              {item.is_available !== false ? 'Available' : 'Out of Stock'}
-                            </span>
-                          </div>
-                          <button 
-                            onClick={() => toggleAvailability(item.id)}
-                            className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
-                              item.is_available !== false 
-                              ? 'bg-stone-100 text-stone-600 hover:bg-stone-200' 
-                              : 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/10'
-                            }`}
-                          >
-                            {item.is_available !== false ? 'Mark Out of Stock' : 'Mark Available'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Sidebar Insights */}
-        <div className="lg:col-span-4 space-y-10">
-          <section className="bg-primary text-white rounded-3xl p-8 relative overflow-hidden shadow-2xl shadow-primary/20">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-bl-[4rem]"></div>
-            <div className="flex items-center gap-3 mb-6 relative z-10">
-              <Sparkles className="text-secondary-container" size={24} />
-              <h2 className="text-2xl font-headline italic">Concierge Insights</h2>
-            </div>
-            <div className="space-y-6 relative z-10">
-              {loadingInsights ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="animate-spin text-white/50" size={32} />
-                </div>
-              ) : insights ? (
-                <>
-                  <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                    <p className="text-sm text-white/80 leading-relaxed italic">
-                      "{insights.insight}"
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white/5 p-4 rounded-2xl">
-                      <TrendingUp className="text-secondary-container mb-2" size={20} />
-                      <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1">Sentiment</p>
-                      <p className="text-xl font-headline">{insights.sentiment}</p>
-                    </div>
-                    <div className="bg-white/5 p-4 rounded-2xl">
-                      <Clock className="text-secondary-container mb-2" size={20} />
-                      <p className="text-[10px] uppercase tracking-widest text-white/40 mb-1">Peak Time</p>
-                      <p className="text-xl font-headline">{insights.peakTime}</p>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                  <p className="text-sm text-white/80 leading-relaxed italic">
-                    Not enough data to generate insights yet.
-                  </p>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="bg-white rounded-3xl p-8 border border-stone-200/30 shadow-sm">
-            <h2 className="text-xl font-headline text-primary mb-6 italic">Recent Menu Edits</h2>
-            <div className="space-y-6">
-              {auditLogs.slice(0, 3).map((edit, i) => (
-                <div key={i} className="flex gap-4 items-start">
-                  <div className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center shrink-0">
-                    <AlertCircle size={14} className="text-stone-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-primary font-bold">{edit.action}: <span className="font-normal text-stone-500">{edit.item}</span></p>
-                    <p className="text-[10px] uppercase tracking-widest text-stone-400 mt-1">
-                      {new Date(edit.createdAt).toLocaleDateString()} {new Date(edit.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • {edit.user}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {auditLogs.length === 0 && (
-                <p className="text-sm text-stone-400 italic">No recent edits.</p>
-              )}
-            </div>
-            <button 
-              onClick={() => setShowAuditLog(true)}
-              className="w-full mt-8 py-3 text-xs font-label uppercase tracking-widest font-bold text-stone-400 hover:text-primary transition-colors border-t border-stone-50 pt-6"
-            >
-              View Audit Log
-            </button>
-          </section>
-        </div>
+          </motion.div>
+        ))}
       </div>
 
-      {/* Add Item Modal */}
+      {filteredItems.length === 0 && (
+        <div className="text-center py-20">
+          <AlertCircle className="mx-auto text-stone-300 mb-4" size={48} />
+          <p className="text-stone-400 font-label uppercase tracking-widest">No menu items found</p>
+        </div>
+      )}
+
+      {/* Add/Edit Modal */}
       <AnimatePresence>
-        {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
+        {showModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowAddModal(false)}
-              className="absolute inset-0 bg-primary/20 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              onClick={() => setShowModal(false)}
             />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-[2.5rem] p-10 shadow-2xl"
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl"
             >
-              <button 
-                onClick={() => setShowAddModal(false)}
-                className="absolute top-8 right-8 p-2 hover:bg-stone-50 rounded-full transition-colors"
-              >
-                <X size={20} className="text-stone-400" />
-              </button>
-              
-              <h2 className="text-3xl font-headline text-primary mb-8 italic">Add New Food Item</h2>
-              
-              <form onSubmit={handleAddItem} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Item Name</label>
-                  <input 
+              <div className="sticky top-0 bg-white border-b border-stone-200 p-6 flex justify-between items-center z-10">
+                <h2 className="text-2xl font-headline text-primary">
+                  {editingItem ? 'Edit Menu Item' : 'Add New Menu Item'}
+                </h2>
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="p-2 hover:bg-stone-100 rounded-full transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Name *</label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                    placeholder="e.g., Cappuccino"
                     required
-                    value={newItem.name}
-                    onChange={e => setNewItem({...newItem, name: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="e.g. Truffle Omelette"
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Description</label>
-                  <textarea 
-                    required
-                    value={newItem.description}
-                    onChange={e => setNewItem({...newItem, description: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors h-24 resize-none"
-                    placeholder="Describe the dish..."
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Price ($)</label>
-                    <input 
-                      required
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Description</label>
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors resize-none"
+                    rows={3}
+                    placeholder="Brief description of the item..."
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Price *</label>
+                    <input
                       type="number"
                       step="0.01"
-                      value={newItem.price}
-                      onChange={e => setNewItem({...newItem, price: e.target.value})}
-                      className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                      placeholder="12.50"
+                      value={formData.price}
+                      onChange={(e) => setFormData(prev => ({ ...prev, price: e.target.value }))}
+                      className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                      placeholder="0.00"
+                      required
                     />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Category</label>
-                    <select 
-                      value={newItem.category}
-                      onChange={e => setNewItem({...newItem, category: e.target.value})}
-                      className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
+                  <div>
+                    <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Category *</label>
+                    <select
+                      value={formData.category}
+                      onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value as any }))}
+                      className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                      required
                     >
-                      <option>Coffee</option>
-                      <option>Tea</option>
-                      <option>Food</option>
-                      <option>Dessert</option>
+                      <option value="Coffee">Coffee</option>
+                      <option value="Tea">Tea</option>
+                      <option value="Food">Food</option>
+                      <option value="Dessert">Dessert</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Image URL</label>
-                  <div className="flex gap-4">
-                    <input 
-                      required
-                      value={newItem.image_url}
-                      onChange={e => setNewItem({...newItem, image_url: e.target.value})}
-                      className="flex-grow bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                      placeholder="https://..."
-                    />
-                    <div className="w-12 h-12 rounded-lg bg-stone-100 flex items-center justify-center overflow-hidden shrink-0">
-                      {newItem.image_url ? <img src={newItem.image_url} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/100'; }} /> : <ImageIcon className="text-stone-300" size={20} />}
-                    </div>
+                <div>
+                  <label className="block text-xs uppercase tracking-widest text-stone-500 mb-2">Image URL</label>
+                  <input
+                    type="url"
+                    value={formData.image_url}
+                    onChange={(e) => setFormData(prev => ({ ...prev, image_url: e.target.value }))}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 outline-none focus:border-primary transition-colors"
+                    placeholder="https://example.com/image.jpg"
+                  />
+                  <p className="text-xs text-stone-400 mt-1">Leave empty for auto-generated image</p>
+                </div>
+
+                {/* Customizations Section */}
+                <div className="border-t border-stone-200 pt-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <label className="text-xs uppercase tracking-widest text-stone-500">Customizations</label>
+                    <button
+                      type="button"
+                      onClick={handleAddCustomization}
+                      className="text-xs bg-primary/10 text-primary px-3 py-1 rounded-full hover:bg-primary/20 transition-colors flex items-center gap-1"
+                    >
+                      <Plus size={14} />
+                      Add Option
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {formData.customizations.map((cust, index) => (
+                      <div key={index} className="flex gap-3 items-center">
+                        <input
+                          type="text"
+                          value={cust.name}
+                          onChange={(e) => handleUpdateCustomization(index, 'name', e.target.value)}
+                          className="flex-1 border border-stone-200 rounded-xl px-4 py-2 outline-none focus:border-primary transition-colors text-sm"
+                          placeholder="Option name (e.g., Extra Shot)"
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={cust.extra_price}
+                          onChange={(e) => handleUpdateCustomization(index, 'extra_price', e.target.value)}
+                          className="w-32 border border-stone-200 rounded-xl px-4 py-2 outline-none focus:border-primary transition-colors text-sm"
+                          placeholder="0.00"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCustomization(index)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                        >
+                          <X size={18} />
+                        </button>
+                      </div>
+                    ))}
+                    
+                    {formData.customizations.length === 0 && (
+                      <p className="text-sm text-stone-400 text-center py-4">No customizations added yet</p>
+                    )}
                   </div>
                 </div>
 
-                <button className="w-full bg-primary text-white py-5 rounded-2xl font-bold uppercase tracking-widest shadow-xl shadow-primary/20 mt-4 hover:scale-[1.01] active:scale-95 transition-all">
-                  Publish to Menu
-                </button>
+                <div className="flex gap-3 pt-4 border-t border-stone-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="flex-1 border border-stone-200 text-stone-600 py-3 rounded-xl font-label text-sm uppercase tracking-widest hover:bg-stone-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex-1 bg-primary text-white py-3 rounded-xl font-label text-sm uppercase tracking-widest hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="animate-spin" size={18} />
+                        Saving...
+                      </>
+                    ) : (
+                      editingItem ? 'Update Item' : 'Add Item'
+                    )}
+                  </button>
+                </div>
               </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Audit Log Modal */}
-      <AnimatePresence>
-        {showAuditLog && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowAuditLog(false)}
-              className="absolute inset-0 bg-primary/20 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] p-10 shadow-2xl"
-            >
-              <button 
-                onClick={() => setShowAuditLog(false)}
-                className="absolute top-8 right-8 p-2 hover:bg-stone-50 rounded-full transition-colors"
-              >
-                <X size={20} className="text-stone-400" />
-              </button>
-              
-              <h2 className="text-3xl font-headline text-primary mb-8 italic">Audit Logs</h2>
-              
-              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
-                {auditLogs.map((log, i) => (
-                  <div key={i} className="flex justify-between items-center p-4 bg-stone-50 rounded-2xl border border-stone-100">
-                    <div>
-                      <p className="text-sm text-primary font-bold">{log.action}</p>
-                      <p className="text-xs text-stone-500">{log.item}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] uppercase tracking-widest text-stone-400">
-                        {new Date(log.createdAt).toLocaleDateString()} {new Date(log.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                      </p>
-                      <p className="text-xs font-bold text-primary">{log.user}</p>
-                    </div>
-                  </div>
-                ))}
-                {auditLogs.length === 0 && (
-                  <p className="text-center text-stone-400 italic py-8">No audit logs available.</p>
-                )}
-              </div>
             </motion.div>
           </div>
         )}
