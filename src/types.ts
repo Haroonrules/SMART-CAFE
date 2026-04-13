@@ -9,20 +9,14 @@ export interface CustomizationGroup {
   }[];
 }
 
-// Simplified customization for Firestore schema
-export interface MenuItemCustomization {
-  name: string;
-  extra_price: number;
-}
-
 export interface MenuItem {
   id: string;
   name: string;
-  description?: string;
+  description: string;
   price: number;
   category: "Coffee" | "Tea" | "Food" | "Dessert" | "Wine";
-  image_url: string; // FIXED: was 'image'
-  customizations?: MenuItemCustomization[]; // FIXED: simplified structure
+  image: string;
+  customizations: CustomizationGroup[];
   tags?: string[];
   isAvailable?: boolean;
   is_active?: boolean;

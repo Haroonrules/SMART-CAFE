@@ -3,81 +3,90 @@ import { User, Settings, LogOut, Award, Calendar, ShoppingBag, ChevronRight, Spa
 import { UserProfile } from '../types';
 import { motion } from 'motion/react';
 import { auth, db } from '../firebase';
-import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithRedirect, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import { toast } from 'sonner';
+import { useAuth } from '../AuthContext';
 
 export function ProfileScreen() {
-  const [user, setUser] = useState<any>(null);
+  const { user, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      
-      if (currentUser) {
-        try {
-          // Check for admin custom claim
-          const tokenResult = await currentUser.getIdTokenResult();
-          const isAdminUser = tokenResult.claims.admin === true;
-          setIsAdmin(isAdminUser);
-          
-          console.log('=== CUSTOM CLAIMS CHECK ===');
-          console.log('User UID:', currentUser.uid);
-          console.log('Admin claim:', tokenResult.claims.admin);
-          console.log('Is Admin:', isAdminUser);
-          
-          // Get or create user profile in Firestore
-          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          
-          if (userDoc.exists()) {
-            const data = userDoc.data() as UserProfile;
-            
-            // Ensure avatar is set from Google profile
-            if (currentUser.photoURL && !data.avatar) {
-              await setDoc(doc(db, 'users', currentUser.uid), { avatar: currentUser.photoURL }, { merge: true });
-              data.avatar = currentUser.photoURL;
-            }
-            
-            setProfile(data);
-          } else {
-            // Create new profile
-            const newProfile = {
-              name: currentUser.displayName || 'Guest',
-              email: currentUser.email || '',
-              role: isAdminUser ? 'admin' : 'customer',
-              avatar: currentUser.photoURL || '',
-              memberSince: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-              totalOrders: 0,
-              loyaltyPoints: 0
-            };
-            await setDoc(doc(db, 'users', currentUser.uid), newProfile);
-            setProfile(newProfile);
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
-        }
-      } else {
+    if (authLoading) return;
+
+    const fetchUserProfile = async () => {
+      if (!user) {
         setProfile(null);
         setIsAdmin(false);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
-  }, []);
+      try {
+        // Check for admin custom claim
+        const tokenResult = await user.getIdTokenResult();
+        const isAdminUser = tokenResult.claims.admin === true;
+        setIsAdmin(isAdminUser);
+        
+        console.log('=== CUSTOM CLAIMS CHECK ===');
+        console.log('User UID:', user.uid);
+        console.log('Admin claim:', tokenResult.claims.admin);
+        console.log('Is Admin:', isAdminUser);
+        
+        // Get or create user profile in Firestore
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        
+        if (userDoc.exists()) {
+          const data = userDoc.data() as UserProfile;
+          
+          // Ensure avatar is set from Google profile
+          if (user.photoURL && !data.avatar) {
+            await setDoc(doc(db, 'users', user.uid), { avatar: user.photoURL }, { merge: true });
+            data.avatar = user.photoURL;
+          }
+          
+          setProfile(data);
+        } else {
+          // Create new profile
+          const newProfile = {
+            name: user.displayName || 'Guest',
+            email: user.email || '',
+            role: isAdminUser ? 'admin' : 'customer',
+            avatar: user.photoURL || '',
+            memberSince: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+            totalOrders: 0,
+            loyaltyPoints: 0
+          };
+          await setDoc(doc(db, 'users', user.uid), newProfile);
+          setProfile(newProfile);
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserProfile();
+  }, [user, authLoading]);
 
   const handleSignIn = async () => {
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
-      toast.success('Signed in successfully');
-    } catch (error) {
+      await signInWithRedirect(auth, provider);
+      toast.success('Redirecting to Google...');
+    } catch (error: any) {
       console.error('Sign in error', error);
-      toast.error('Failed to sign in');
+      
+      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+        toast.info('Sign in was cancelled');
+      } else {
+        toast.error('Failed to initiate sign in');
+      }
     }
   };
 
@@ -91,7 +100,7 @@ export function ProfileScreen() {
     }
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return <div className="flex justify-center items-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>;
   }
 

@@ -1,43 +1,8 @@
-# Dependencies
 node_modules/
-.pnp
-.pnp.js
-
-# Build outputs
-dist/
 build/
-*.local
-
-# Environment variables (NEVER commit these!)
-.env
-.env.local
-.env.production
-!.env.example
-
-# Firebase Admin SDK - KEEP THIS SECRET!
-firebase-admin-sdk.json
-serviceAccountKey.json
-*-admin-sdk.json
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-
-# Testing
+dist/
 coverage/
-
-# Temporary files
-tmp/
-temp/
+.DS_Store
+*.log
+.env*
+!.env.example

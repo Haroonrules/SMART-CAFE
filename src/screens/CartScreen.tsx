@@ -1,28 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useCart } from '../CartContext';
 import { Trash2, Minus, Plus, ShoppingBag, CreditCard, Wallet, Loader2, LogIn } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CartItem } from '../types';
 import { collection, addDoc, doc, updateDoc, increment } from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { db } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import { toast } from 'sonner';
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
+import { useAuth } from '../AuthContext';
 
 export function CartScreen() {
   const { items, removeItem, updateQuantity, subtotal, getItemPrice, clearCart } = useCart();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
-  const [user, setUser] = useState<any>(null);
   const tax = subtotal * 0.08;
   const total = subtotal + tax;
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
-  }, []);
 
   const getOptionNames = (item: CartItem) => {
     if (!item.selectedOptions || !item.customizations) return null;
@@ -43,9 +36,8 @@ export function CartScreen() {
   };
 
   const handleSignIn = async () => {
-    const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      await signInWithGoogle();
       toast.success('Signed in successfully');
     } catch (error) {
       console.error('Sign in error', error);

@@ -24,52 +24,28 @@ try {
 } catch (error) {
   // App not initialized, so initialize it
   try {
-    // Try using environment variables first (more reliable than JSON file)
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    const serviceAccountPath =
+      process.env.FIREBASE_ADMIN_SDK_PATH || "./firebase-admin-sdk.json";
+    console.log(`Attempting to load service account from: ${serviceAccountPath}`);
+    
+    const serviceAccount = require(serviceAccountPath);
+    console.log("✅ Service account loaded successfully");
 
-    if (projectId && clientEmail && privateKey) {
-      console.log("Initializing Firebase Admin with environment variables...");
-      console.log(`   Project ID: ${projectId}`);
-      console.log(`   Client Email: ${clientEmail}`);
-      
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
-      });
-      console.log("✅ Firebase Admin SDK initialized successfully with env vars");
-    } else {
-      // Fallback to JSON file
-      const require = createRequire(import.meta.url);
-      const serviceAccountPath = process.env.FIREBASE_ADMIN_SDK_PATH || "./firebase-admin-sdk.json";
-      console.log(`Falling back to service account file: ${serviceAccountPath}`);
-      
-      const serviceAccount = require(serviceAccountPath);
-      
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      });
-      console.log("✅ Firebase Admin SDK initialized successfully with JSON file");
-    }
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    console.log("✅ Firebase Admin SDK initialized for token verification");
   } catch (initError: any) {
-    console.error(
-      "❌ CRITICAL: Firebase Admin SDK initialization failed!",
+    console.warn(
+      "⚠️  Firebase Admin SDK not initialized. Admin token verification will not work.",
     );
     console.error("Initialization error:", initError.message);
-    console.error("Stack:", initError.stack);
-    console.error("\n⚠️  Admin token verification will NOT work until this is fixed.");
-    console.error("Please check your .env file or firebase-admin-sdk.json credentials.\n");
   }
 }
 
 /**
  * Middleware to verify admin custom claims in Firebase ID token
- * Uses Firebase Admin SDK for cryptographic signature verification (SECURE)
- * Includes timeout handling for network issues
+ * Usage: app.post("/api/admin/...", verifyAdminToken, handler)
  */
 async function verifyAdminToken(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
@@ -83,81 +59,31 @@ async function verifyAdminToken(req: any, res: any, next: any) {
   const token = authHeader.split(" ")[1];
 
   try {
-    console.log('🔐 Verifying Firebase ID token...');
+    console.log('Verifying admin token...');
     
-    // Create a promise with timeout to prevent hanging
-    const TIMEOUT_MS = 5000; // 5 second timeout
-    
-    const verifyWithTimeout = new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`Firebase token verification timed out after ${TIMEOUT_MS}ms - check network connectivity`));
-      }, TIMEOUT_MS);
-      
-      admin.auth().verifyIdToken(token)
-        .then((result) => {
-          clearTimeout(timeoutId);
-          resolve(result);
-        })
-        .catch((error) => {
-          clearTimeout(timeoutId);
-          reject(error);
-        });
-    });
-    
-    // Verify the ID token using Firebase Admin SDK (cryptographically secure)
-    const decodedToken = await verifyWithTimeout as admin.auth.DecodedIdToken;
-    
-    console.log('✅ Token verified successfully');
-    console.log('   User:', decodedToken.email);
-    console.log('   UID:', decodedToken.uid);
+    // Verify the ID token with timeout
+    const decodedToken = await Promise.race([
+      admin.auth().verifyIdToken(token),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Token verification timeout')), 5000)
+      )
+    ]);
+
+    console.log('Token verified for user:', decodedToken.email);
 
     // Check for admin custom claim
     if (decodedToken.admin !== true) {
-      console.log('❌ User does not have admin role');
-      return res.status(403).json({ 
-        error: "Admin privileges required",
-        message: `User ${decodedToken.email} does not have admin role.`
-      });
+      console.log('User is not admin:', decodedToken.email);
+      return res.status(403).json({ error: "Admin privileges required" });
     }
 
-    // Attach user info to request
+    // Attach user info to request for use in route handler
     req.user = decodedToken;
-    console.log('✅ Admin verification successful - proceeding to handler');
+    console.log('Admin verification successful, proceeding to handler');
     next();
   } catch (error: any) {
-    console.error("❌ Token verification failed:", error.message);
-    
-    // Handle timeout specifically
-    if (error.message.includes('timed out')) {
-      console.error('💡 NETWORK ISSUE: Cannot reach Firebase servers');
-      console.error('   Possible causes:');
-      console.error('   - Firewall blocking outbound HTTPS connections');
-      console.error('   - VPN/proxy interfering with Google Cloud APIs');
-      console.error('   - Network restrictions on identitytoolkit.googleapis.com');
-      console.error('   Solution: Check your network configuration or try a different network');
-      
-      return res.status(503).json({ 
-        error: "Service temporarily unavailable",
-        message: "Cannot verify authentication token due to network issues. Please check your connection or try again later.",
-        details: error.message
-      });
-    }
-    
-    // Handle specific Firebase auth errors
-    if (error.code === 'auth/invalid-id-token') {
-      return res.status(401).json({ error: "Invalid token format or signature" });
-    }
-    
-    if (error.code === 'auth/id-token-expired') {
-      return res.status(401).json({ error: "Token has expired. Please log in again." });
-    }
-    
-    if (error.code === 'auth/argument-error') {
-      return res.status(401).json({ error: "Invalid token provided" });
-    }
-    
-    // Generic unauthorized error for all other cases
-    return res.status(401).json({ error: "Unauthorized - Invalid or expired token" });
+    console.error("Token verification error:", error.message);
+    res.status(401).json({ error: error.message || "Invalid or expired token" });
   }
 }
 
@@ -535,98 +461,46 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
    */
   app.post("/api/admin/promote", verifyAdminToken, async (req, res) => {
     try {
-      const { email, system_role, display_role, display_name } = req.body;
-
-      console.log('Promoting/Creating user:', { email, system_role, display_role, display_name });
+      const { email, system_role, display_role } = req.body;
 
       if (!email || !system_role) {
         return res.status(400).json({ error: "Email and system_role are required" });
       }
 
       // Find user by email in users collection
-      console.log('Searching for user by email...');
       const usersSnapshot = await admin.firestore()
         .collection("users")
         .where("email", "==", email)
         .get();
 
-      let userId: string;
-      let isNewUser = false;
-
       if (usersSnapshot.empty) {
-        // User doesn't exist - create them
-        console.log('User not found, creating new user account...');
-        
-        // Create user in Firebase Auth
-        const userRecord = await admin.auth().createUser({
-          email,
-          displayName: display_name || email.split('@')[0],
-          emailVerified: false,
-        });
-        
-        userId = userRecord.uid;
-        isNewUser = true;
-        console.log('Created new user in Firebase Auth:', userId);
-        
-        // Create user document in Firestore
-        await admin.firestore().collection("users").doc(userId).set({
-          uid: userId,
-          email,
-          display_name: display_name || email.split('@')[0],
-          system_role,
-          display_role: display_role || system_role,
-          created_at: admin.firestore.FieldValue.serverTimestamp(),
-          updated_at: admin.firestore.FieldValue.serverTimestamp(),
-          is_active: true,
-        });
-        console.log('Created user document in Firestore');
-      } else {
-        // User exists - update their role
-        const userDoc = usersSnapshot.docs[0];
-        userId = userDoc.id;
-        console.log('Found existing user:', userId);
-
-        // Update Firestore document
-        console.log('Updating Firestore document...');
-        await admin.firestore().collection("users").doc(userId).update({
-          system_role,
-          display_role: display_role || system_role,
-          updated_at: admin.firestore.FieldValue.serverTimestamp()
-        });
-        console.log('Firestore updated successfully');
+        return res.status(404).json({ error: "User not found" });
       }
 
+      const userDoc = usersSnapshot.docs[0];
+      const userId = userDoc.id;
+
+      // Update Firestore document
+      await admin.firestore().collection("users").doc(userId).update({
+        system_role,
+        display_role: display_role || system_role,
+        updated_at: admin.firestore.FieldValue.serverTimestamp()
+      });
+
       // Update Firebase Auth custom claims
-      console.log('Setting custom claims...');
       await admin.auth().setCustomUserClaims(userId, { 
         [system_role]: true 
       });
-      console.log('Custom claims set successfully');
 
       res.json({ 
         success: true, 
-        message: isNewUser 
-          ? `New staff member ${email} created as ${system_role}` 
-          : `User ${email} promoted to ${system_role}`,
-        isNewUser
+        message: `User ${email} promoted to ${system_role}` 
       });
-      console.log('Response sent successfully');
     } catch (error: any) {
-      console.error("❌ Error promoting/creating user:", error);
-      console.error("Error stack:", error.stack);
-      
-      // Handle specific Firebase errors
-      if (error.code === 'auth/email-already-exists') {
-        return res.status(409).json({ error: "A user with this email already exists in Firebase Auth but not in Firestore. Please check your database." });
-      }
-      
-      if (error.code === 'auth/invalid-email') {
-        return res.status(400).json({ error: "Invalid email address" });
-      }
-      
+      console.error("Error promoting user:", error);
       res
         .status(500)
-        .json({ error: "Failed to promote/create user", details: error.message });
+        .json({ error: "Failed to promote user", details: error.message });
     }
   });
 

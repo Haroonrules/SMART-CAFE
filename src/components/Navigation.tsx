@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, NavLink as RouterNavLink } from 'react-router-dom';
-import { ShoppingBag, User, Bell, Table, Menu as MenuIcon, Receipt, LayoutDashboard, Users, Menu, X, TrendingUp } from 'lucide-react';
+import { ShoppingBag, User, Bell, Table, Menu as MenuIcon, Receipt, Wine, Sparkles, LayoutDashboard, Package, Users, Menu, X, TrendingUp } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function Navbar() {
@@ -36,6 +36,8 @@ export function Navbar() {
           <nav className="flex-1 space-y-1">
             <AdminNavLink to="/admin/dashboard" icon={<LayoutDashboard size={20} />} label="Dashboard" onClick={() => setIsAdminMobileMenuOpen(false)} />
             <AdminNavLink to="/admin/orders" icon={<Receipt size={20} />} label="Live Orders" onClick={() => setIsAdminMobileMenuOpen(false)} />
+            <AdminNavLink to="/admin/menu" icon={<Package size={20} />} label="Menu Management" onClick={() => setIsAdminMobileMenuOpen(false)} />
+            <AdminNavLink to="/admin/wines" icon={<Wine size={20} />} label="Wine Cellar" onClick={() => setIsAdminMobileMenuOpen(false)} />
             <AdminNavLink to="/admin/staff" icon={<Users size={20} />} label="Staff Directory" onClick={() => setIsAdminMobileMenuOpen(false)} />
             <AdminNavLink to="/admin/insights" icon={<TrendingUp size={20} />} label="AI Analytics" onClick={() => setIsAdminMobileMenuOpen(false)} />
           </nav>

@@ -3,8 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { MenuScreen } from './screens/MenuScreen';
 import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminOrdersScreen } from './screens/AdminOrdersScreen';
+import { AdminInventoryScreen } from './screens/AdminInventoryScreen';
 import { AdminStaffScreen } from './screens/AdminStaffScreen';
-import { AdminInsightsScreen } from './screens/AdminInsightsScreen';
 import { AdminLoginScreen } from './screens/AdminLoginScreen';
 import { CartScreen } from './screens/CartScreen';
 import { OrdersScreen } from './screens/OrdersScreen';
@@ -17,6 +17,7 @@ import { OTPScreen } from './screens/OTPScreen';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { ConfirmationScreen } from './screens/ConfirmationScreen';
 import { CartProvider } from './CartContext';
+import { AuthProvider } from './AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Navbar, MobileNav } from './components/Navigation';
 import { ApiKeyGuard } from './components/ApiKeyGuard';
@@ -27,8 +28,9 @@ function App() {
   return (
     <ErrorBoundary>
       <ApiKeyGuard>
-        <CartProvider>
-          <BrowserRouter>
+        <AuthProvider>
+          <CartProvider>
+            <BrowserRouter>
             <div className="min-h-screen bg-surface-container-lowest flex flex-col">
               <Navbar />
               <div className="flex-grow">
@@ -52,9 +54,9 @@ function App() {
                   {/* Admin Routes */}
                   <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
                   <Route path="/admin/dashboard" element={<ProtectedRoute requireAdmin><AdminDashboardScreen /></ProtectedRoute>} />
-                  <Route path="/admin/orders" element={<ProtectedRoute><AdminOrdersScreen /></ProtectedRoute>} />
+                  <Route path="/admin/orders" element={<ProtectedRoute requireAdmin><AdminOrdersScreen /></ProtectedRoute>} />
+                  <Route path="/admin/inventory" element={<ProtectedRoute requireAdmin><AdminInventoryScreen /></ProtectedRoute>} />
                   <Route path="/admin/staff" element={<ProtectedRoute requireAdmin><AdminStaffScreen /></ProtectedRoute>} />
-                  <Route path="/admin/insights" element={<ProtectedRoute requireAdmin><AdminInsightsScreen /></ProtectedRoute>} />
                   
                   {/* Catch All */}
                   <Route path="*" element={<Navigate to="/" replace />} />
@@ -65,6 +67,7 @@ function App() {
             </div>
           </BrowserRouter>
         </CartProvider>
+      </AuthProvider>
       </ApiKeyGuard>
     </ErrorBoundary>
   );

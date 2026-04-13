@@ -1,22 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, AlertTriangle, TrendingUp, Package, ArrowUpRight, ArrowDownRight, X, Loader2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Plus, Search, AlertTriangle, TrendingUp, Package, ArrowUpRight, ArrowDownRight, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
-import { db, auth } from '../firebase';
-import { toast } from 'sonner';
 
-interface InventoryItem {
-  id: string;
-  name: string;
-  category: string;
-  status: string;
-  price: number;
-  trend?: string;
-}
+const INITIAL_INVENTORY = [
+  { id: 'inv-001', name: 'Ethiopian Coffee Beans', category: 'Coffee', status: 'In Stock', price: 24.50, trend: '+12%' },
+  { id: 'inv-002', name: 'Whole Milk', category: 'Dairy', status: 'Low Stock', price: 2.50, trend: '-5%' },
+  { id: 'inv-003', name: 'Oat Milk', category: 'Dairy', status: 'Low Stock', price: 3.75, trend: '+20%' },
+  { id: 'inv-004', name: 'Avocados', category: 'Produce', status: 'Out of Stock', price: 12.00, trend: '-15%' },
+  { id: 'inv-005', name: 'Sourdough Bread', category: 'Bakery', status: 'In Stock', price: 4.50, trend: '+2%' },
+  { id: 'inv-006', name: 'Matcha Powder', category: 'Tea', status: 'In Stock', price: 120.00, trend: '+8%' },
+  { id: 'inv-007', name: 'Dark Chocolate', category: 'Pantry', status: 'In Stock', price: 18.00, trend: '-2%' },
+];
 
 export function AdminInventoryScreen() {
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [inventory, setInventory] = useState(INITIAL_INVENTORY);
   const [filter, setFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -28,30 +25,6 @@ export function AdminInventoryScreen() {
     price: ''
   });
 
-  useEffect(() => {
-    fetchInventory();
-  }, []);
-
-  const fetchInventory = async () => {
-    try {
-      // Try to fetch from Firestore inventory collection
-      const snapshot = await getDocs(collection(db, 'inventory'));
-      if (!snapshot.empty) {
-        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InventoryItem));
-        setInventory(items);
-      } else {
-        // If no inventory exists, show empty state with message
-        setInventory([]);
-        toast.info('No inventory items found. Add your first item!');
-      }
-    } catch (error) {
-      console.error('Error fetching inventory:', error);
-      toast.error('Failed to load inventory');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const filteredInventory = inventory.filter(item => {
     const matchesFilter = filter === 'all' || item.status === filter;
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -59,43 +32,24 @@ export function AdminInventoryScreen() {
     return matchesFilter && matchesSearch;
   });
 
-  const handleAddStock = async (e: React.FormEvent) => {
+  const handleAddStock = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      
-      // For now, we'll use direct Firestore write since this is internal admin data
-      // In production, this should also go through backend API
-      const docRef = await addDoc(collection(db, 'inventory'), {
-        name: newItem.name,
-        category: newItem.category,
-        status: newItem.status,
-        price: parseFloat(newItem.price),
-        trend: '0%',
-        created_at: new Date().toISOString()
-      });
-      
-      setInventory([{ id: docRef.id, name: newItem.name, category: newItem.category, status: newItem.status, price: parseFloat(newItem.price), trend: '0%' }, ...inventory]);
-      setShowAddModal(false);
-      setNewItem({ name: '', category: 'Coffee', status: 'In Stock', price: '' });
-      toast.success('Inventory item added successfully!');
-    } catch (error) {
-      console.error(error);
-      toast.error('Failed to add inventory item');
-    }
+    const item = {
+      id: `inv-${Date.now()}`,
+      name: newItem.name,
+      category: newItem.category,
+      status: newItem.status,
+      price: parseFloat(newItem.price),
+      trend: '0%'
+    };
+    
+    setInventory([item, ...inventory]);
+    setShowAddModal(false);
+    setNewItem({ name: '', category: 'Coffee', status: 'In Stock', price: '' });
   };
 
-  const updateStatus = async (id: string, newStatus: string) => {
-    try {
-      await updateDoc(doc(db, 'inventory', id), {
-        status: newStatus
-      });
-      setInventory(prev => prev.map(item => item.id === id ? { ...item, status: newStatus } : item));
-      toast.success(`Status updated to ${newStatus}`);
-    } catch (error) {
-      console.error(error);
-      toast.error('Failed to update status');
-    }
+  const updateStatus = (id: string, newStatus: string) => {
+    setInventory(prev => prev.map(item => item.id === id ? { ...item, status: newStatus } : item));
   };
 
   return (
@@ -126,35 +80,27 @@ export function AdminInventoryScreen() {
       </header>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-        {loading ? (
-          <div className="col-span-full flex justify-center py-12">
-            <Loader2 className="animate-spin text-primary" size={40} />
-          </div>
-        ) : (
-          <>
-            <StatCard 
-              icon={<Package className="text-blue-600" size={24} />}
-              label="Total Items"
-              value={inventory.length.toString()}
-              trend="+4"
-              trendType="up"
-            />
-            <StatCard 
-              icon={<AlertTriangle className="text-amber-600" size={24} />}
-              label="Low Stock Alerts"
-              value={inventory.filter(i => i.status === 'Low Stock').length.toString()}
-              trend="-2"
-              trendType="down"
-            />
-            <StatCard 
-              icon={<TrendingUp className="text-emerald-600" size={24} />}
-              label="Monthly Spend"
-              value="$4,250"
-              trend="+12%"
-              trendType="up"
-            />
-          </>
-        )}
+        <StatCard 
+          icon={<Package className="text-blue-600" size={24} />}
+          label="Total Items"
+          value={inventory.length.toString()}
+          trend="+4"
+          trendType="up"
+        />
+        <StatCard 
+          icon={<AlertTriangle className="text-amber-600" size={24} />}
+          label="Low Stock Alerts"
+          value={inventory.filter(i => i.status === 'Low Stock').length.toString()}
+          trend="-2"
+          trendType="down"
+        />
+        <StatCard 
+          icon={<TrendingUp className="text-emerald-600" size={24} />}
+          label="Monthly Spend"
+          value="$4,250"
+          trend="+12%"
+          trendType="up"
+        />
       </div>
 
       <div className="bg-white rounded-3xl border border-stone-200/30 shadow-sm overflow-hidden">
