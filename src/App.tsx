@@ -5,6 +5,9 @@ import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminOrdersScreen } from './screens/AdminOrdersScreen';
 import { AdminInventoryScreen } from './screens/AdminInventoryScreen';
 import { AdminStaffScreen } from './screens/AdminStaffScreen';
+import { AdminWineScreen } from './screens/AdminWineScreen';
+import { AdminMenuScreen } from './screens/AdminMenuScreen';
+import { AdminInsightsScreen } from './screens/AdminInsightsScreen';
 import { AdminLoginScreen } from './screens/AdminLoginScreen';
 import { CartScreen } from './screens/CartScreen';
 import { OrdersScreen } from './screens/OrdersScreen';
@@ -17,7 +20,6 @@ import { OTPScreen } from './screens/OTPScreen';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { ConfirmationScreen } from './screens/ConfirmationScreen';
 import { CartProvider } from './CartContext';
-import { AuthProvider } from './AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Navbar, MobileNav } from './components/Navigation';
 import { ApiKeyGuard } from './components/ApiKeyGuard';
@@ -28,9 +30,8 @@ function App() {
   return (
     <ErrorBoundary>
       <ApiKeyGuard>
-        <AuthProvider>
-          <CartProvider>
-            <BrowserRouter>
+        <CartProvider>
+          <BrowserRouter>
             <div className="min-h-screen bg-surface-container-lowest flex flex-col">
               <Navbar />
               <div className="flex-grow">
@@ -52,11 +53,13 @@ function App() {
                   <Route path="/profile" element={<ProfileScreen />} />
                   
                   {/* Admin Routes */}
-                  <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-                  <Route path="/admin/dashboard" element={<ProtectedRoute requireAdmin><AdminDashboardScreen /></ProtectedRoute>} />
+                  <Route path="/admin" element={<Navigate to="/admin/orders" replace />} />
                   <Route path="/admin/orders" element={<ProtectedRoute requireAdmin><AdminOrdersScreen /></ProtectedRoute>} />
+                  <Route path="/admin/menu" element={<ProtectedRoute requireAdmin><AdminMenuScreen /></ProtectedRoute>} />
                   <Route path="/admin/inventory" element={<ProtectedRoute requireAdmin><AdminInventoryScreen /></ProtectedRoute>} />
+                  <Route path="/admin/wines" element={<ProtectedRoute requireAdmin><AdminWineScreen /></ProtectedRoute>} />
                   <Route path="/admin/staff" element={<ProtectedRoute requireAdmin><AdminStaffScreen /></ProtectedRoute>} />
+                  <Route path="/admin/insights" element={<ProtectedRoute requireAdmin><AdminInsightsScreen /></ProtectedRoute>} />
                   
                   {/* Catch All */}
                   <Route path="*" element={<Navigate to="/" replace />} />
@@ -67,7 +70,6 @@ function App() {
             </div>
           </BrowserRouter>
         </CartProvider>
-      </AuthProvider>
       </ApiKeyGuard>
     </ErrorBoundary>
   );

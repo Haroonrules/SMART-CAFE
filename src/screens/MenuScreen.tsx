@@ -28,13 +28,17 @@ export function MenuScreen() {
   const [isThinking, setIsThinking] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, 'menuItems'), where('is_active', '==', true));
-    
+    const q = query(collection(db, 'menu_items'), where('is_active', '==', true));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedItems = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as MenuItem[];
+      const fetchedItems = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          // Map snake_case image_url to camelCase image for UI consistency
+          image: data.image_url || ''
+        } as MenuItem;
+      });
       setMenuItems(fetchedItems);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'menuItems');
@@ -96,7 +100,7 @@ export function MenuScreen() {
     setSelectedItem(item);
     // Initialize defaults for single choice groups
     const defaults: Record<string, string | string[]> = {};
-    item.customizations?.forEach(group => {
+    (item.customizations || []).forEach(group => {
       if (group.type === 'single') {
         defaults[group.id] = group.options[0].id;
       } else {
@@ -109,7 +113,8 @@ export function MenuScreen() {
   const handleOptionToggle = (groupId: string, optionId: string, type: 'single' | 'multiple') => {
     setCustomizations(prev => {
       if (type === 'single') {
-        return { ...prev, [groupId]: optionId };
+        // For flat array customizations, toggle boolean value
+        return { ...prev, [optionId]: !prev[optionId] };
       } else {
         const current = (prev[groupId] as string[]) || [];
         const next = current.includes(optionId)
@@ -243,7 +248,7 @@ export function MenuScreen() {
                             <div className="p-4 flex-grow flex flex-col">
                               <div className="flex justify-between items-start mb-1">
                                 <h4 className="font-headline text-sm text-primary line-clamp-1">{item.name}</h4>
-                                <span className="text-secondary font-bold text-xs">${item.price.toFixed(2)}</span>
+                                <span className="text-secondary font-bold text-xs">${(item.price || (item as any).price_glass || 0).toFixed(2)}</span>
                               </div>
                               <p className="text-[10px] text-on-surface-variant line-clamp-2 mb-3 flex-grow">{item.description}</p>
                               <button 
@@ -404,24 +409,23 @@ export function MenuScreen() {
               </div>
 
               <div className="flex-grow overflow-y-auto p-6 md:p-8 space-y-10">
-                {selectedItem.customizations?.map(group => (
-                  <section key={group.id}>
+                {(selectedItem.customizations || []).length > 0 ? (
+                  <section>
                     <div className="flex justify-between items-end mb-4">
-                      <h3 className="font-headline text-xl text-primary italic">{group.name}</h3>
+                      <h3 className="font-headline text-xl text-primary italic">Customizations</h3>
                       <span className="text-[10px] font-label uppercase tracking-widest text-stone-400">
-                        {group.type === 'single' ? 'Select One' : 'Select Multiple'}
+                        Select Options
                       </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {group.options.map(option => {
-                        const isSelected = group.type === 'single' 
-                          ? customizations[group.id] === option.id
-                          : (customizations[group.id] as string[])?.includes(option.id);
+                      {(selectedItem.customizations || []).map((customization: any, index: number) => {
+                        const customizationId = `custom_${index}`;
+                        const isSelected = customizations[customizationId] === true;
                         
                         return (
                           <button
-                            key={option.id}
-                            onClick={() => handleOptionToggle(group.id, option.id, group.type)}
+                            key={customizationId}
+                            onClick={() => handleOptionToggle('custom', customizationId, 'single')}
                             className={`flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left ${
                               isSelected 
                                 ? 'border-secondary bg-secondary/5 shadow-sm' 
@@ -435,12 +439,12 @@ export function MenuScreen() {
                                 {isSelected && <Check size={12} className="text-white" />}
                               </div>
                               <span className={`font-medium ${isSelected ? 'text-primary' : 'text-on-surface-variant'}`}>
-                                {option.name}
+                                {customization.name}
                               </span>
                             </div>
-                            {option.price && (
+                            {customization.extra_price && customization.extra_price > 0 && (
                               <span className="text-xs font-headline text-stone-400">
-                                +${option.price.toFixed(2)}
+                                +${customization.extra_price.toFixed(2)}
                               </span>
                             )}
                           </button>
@@ -448,7 +452,9 @@ export function MenuScreen() {
                       })}
                     </div>
                   </section>
-                ))}
+                ) : (
+                  <p className="text-center text-stone-400 py-8">No customizations available for this item.</p>
+                )}
               </div>
 
               <div className="p-6 md:p-8 border-t border-stone-100 bg-stone-50/50">

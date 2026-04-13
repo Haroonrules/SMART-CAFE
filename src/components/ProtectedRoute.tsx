@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
+import { auth } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -8,40 +9,43 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, requireAdmin = false }: ProtectedRouteProps) {
-  const { user, loading } = useAuth();
+  const [loading, setLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
-  const [checkingAdmin, setCheckingAdmin] = useState(requireAdmin);
 
   useEffect(() => {
-    if (loading) return;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
 
-    if (!user) {
-      setIsAuthorized(false);
-      setCheckingAdmin(false);
-      return;
-    }
-
-    if (requireAdmin) {
-      const checkAdminStatus = async () => {
+      if (requireAdmin) {
         try {
+          // Get the current ID token result to check for custom claims
           const tokenResult = await user.getIdTokenResult();
-          setIsAuthorized(tokenResult.claims.admin === true);
+          
+          // Check for the custom claim 'admin'
+          if (tokenResult.claims.admin === true) {
+            setIsAuthorized(true);
+          } else {
+            setIsAuthorized(false);
+          }
         } catch (error) {
           console.error('Error checking admin claims:', error);
           setIsAuthorized(false);
-        } finally {
-          setCheckingAdmin(false);
         }
-      };
-      checkAdminStatus();
-    } else {
-      setIsAuthorized(true);
-      setCheckingAdmin(false);
-    }
-  }, [user, loading, requireAdmin]);
+      } else {
+        // Non-admin protected route just requires authentication
+        setIsAuthorized(true);
+      }
+      setLoading(false);
+    });
 
-  // Show loading spinner while Firebase is restoring session or checking admin status
-  if (loading || checkingAdmin) {
+    return () => unsubscribe();
+  }, [requireAdmin]);
+
+  if (loading) {
     return <div className="flex justify-center items-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>;
   }
 

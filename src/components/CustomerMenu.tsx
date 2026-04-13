@@ -9,13 +9,17 @@ export function CustomerMenu() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, 'menuItems'), where('is_active', '==', true));
-    
+    const q = query(collection(db, 'menu_items'), where('is_active', '==', true));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as MenuItem[];
+      const items = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          // Map snake_case image_url to camelCase image for UI consistency
+          image: data.image_url || ''
+        } as MenuItem;
+      });
       setMenuItems(items);
       setLoading(false);
     }, (error) => {

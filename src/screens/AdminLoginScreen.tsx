@@ -22,7 +22,7 @@ export function AdminLoginScreen() {
         </div>
 
         <form 
-          onSubmit={(e) => { e.preventDefault(); navigate('/admin/dashboard'); }}
+          onSubmit={(e) => { e.preventDefault(); navigate('/admin/orders'); }}
           className="space-y-8"
         >
           <div className="space-y-6">

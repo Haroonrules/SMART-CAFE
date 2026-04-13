@@ -1,288 +1,395 @@
-import React, { useState } from 'react';
-import { Plus, Search, User, Mail, Phone, Calendar, Clock, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useEffect, useState } from 'react';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase';
+import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { User, Mail, Shield, Clock, Trash2, X, AlertCircle, Plus } from 'lucide-react';
+import { toast } from 'sonner';
 
-const INITIAL_STAFF = [
-  { id: 'stf-001', name: 'Chef Marco Rossi', role: 'Head Chef', email: 'marco@smartcafe.com', phone: '+1 234 567 8901', status: 'On Duty', shift: 'Morning', avatar: 'https://picsum.photos/seed/marco/200/200' },
-  { id: 'stf-002', name: 'Sarah Chen', role: 'Lead Barista', email: 'sarah@smartcafe.com', phone: '+1 234 567 8902', status: 'On Duty', shift: 'Morning', avatar: 'https://picsum.photos/seed/sarah/200/200' },
-  { id: 'stf-003', name: 'Alex Rivera', role: 'Barista', email: 'alex@smartcafe.com', phone: '+1 234 567 8903', status: 'Off Duty', shift: 'Evening', avatar: 'https://picsum.photos/seed/alex/200/200' },
-  { id: 'stf-004', name: 'Elena Gilbert', role: 'Server', email: 'elena@smartcafe.com', phone: '+1 234 567 8904', status: 'On Duty', shift: 'Morning', avatar: 'https://picsum.photos/seed/elena/200/200' },
-  { id: 'stf-005', name: 'Marcus Thorne', role: 'Sommelier', email: 'marcus@smartcafe.com', phone: '+1 234 567 8905', status: 'Off Duty', shift: 'Evening', avatar: 'https://picsum.photos/seed/marcus/200/200' },
-];
+interface StaffMember {
+  id: string;
+  uid: string;
+  email: string;
+  display_role: string;
+  system_role: 'admin' | 'kitchen';
+  is_on_duty: boolean;
+  photo_url?: string;
+}
+
+const OWNER_EMAIL = 'owner@smartcafe.com'; // Hardcoded owner email for immunity
 
 export function AdminStaffScreen() {
-  const [staff, setStaff] = useState(INITIAL_STAFF);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
-  
-  const [newMember, setNewMember] = useState({
-    name: '',
-    role: 'Barista',
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newStaff, setNewStaff] = useState({
     email: '',
-    phone: '',
-    shift: 'Morning',
-    avatar: 'https://picsum.photos/seed/newstaff/200/200'
+    display_role: '',
+    system_role: 'kitchen' as 'admin' | 'kitchen'
   });
 
-  const filteredStaff = staff.filter(s => {
-    const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         s.role.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'staff'), (snapshot) => {
+      const members = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as StaffMember[];
+      
+      setStaff(members);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'staff');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const filteredStaff = staff.filter(member => {
+    const searchLower = searchQuery.toLowerCase();
+    const matchesEmail = member.email?.toLowerCase().includes(searchLower);
+    const matchesRole = member.display_role?.toLowerCase().includes(searchLower);
+    const matchesSystemRole = member.system_role?.toLowerCase().includes(searchLower);
+    return matchesEmail || matchesRole || matchesSystemRole;
   });
 
-  const toggleStatus = (id: string) => {
-    setStaff(prev => prev.map(s => 
-      s.id === id ? { ...s, status: s.status === 'On Duty' ? 'Off Duty' : 'On Duty' } : s
-    ));
+  const toggleDutyStatus = async (member: StaffMember) => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const token = await user.getIdToken?.();
+      
+      if (!token) {
+        toast.error('Authentication required');
+        return;
+      }
+
+      const response = await fetch(`/api/staff/${member.uid}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          is_on_duty: !member.is_on_duty
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update duty status');
+      }
+
+      toast.success(`${member.email} is now ${!member.is_on_duty ? 'On Duty' : 'Off Duty'}`);
+    } catch (error: any) {
+      console.error('Toggle duty error:', error);
+      toast.error(error.message || 'Failed to update duty status');
+      handleFirestoreError(error, OperationType.UPDATE, `staff/${member.uid}`);
+    }
   };
 
-  const handleAddMember = (e: React.FormEvent) => {
-    e.preventDefault();
-    const member = {
-      id: `stf-${Date.now()}`,
-      name: newMember.name,
-      role: newMember.role,
-      email: newMember.email,
-      phone: newMember.phone,
-      status: 'Off Duty',
-      shift: newMember.shift,
-      avatar: newMember.avatar || `https://picsum.photos/seed/${newMember.name}/200/200`
-    };
-    setStaff([member, ...staff]);
-    setShowAddModal(false);
-    setNewMember({ name: '', role: 'Barista', email: '', phone: '', shift: 'Morning', avatar: 'https://picsum.photos/seed/newstaff/200/200' });
+  const removeStaff = async (member: StaffMember) => {
+    // Owner Immunity Check
+    if (member.email === OWNER_EMAIL) {
+      toast.error('Cannot remove the Owner account');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to remove ${member.email}?`)) {
+      return;
+    }
+
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const token = await user.getIdToken?.();
+      
+      if (!token) {
+        toast.error('Authentication required');
+        return;
+      }
+
+      const response = await fetch(`/api/staff/${member.uid}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to remove staff member');
+      }
+
+      toast.success('Staff member removed successfully');
+    } catch (error: any) {
+      console.error('Remove staff error:', error);
+      toast.error(error.message || 'Failed to remove staff member');
+      handleFirestoreError(error, OperationType.UPDATE, `staff/${member.uid}`);
+    }
   };
+
+  const addStaff = async () => {
+    if (!newStaff.email || !newStaff.display_role) {
+      toast.error('Email and display role are required');
+      return;
+    }
+
+    try {
+      // Get auth token from Firebase Auth instance directly
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        toast.error('Authentication required');
+        return;
+      }
+
+      const token = await currentUser.getIdToken(true); // Force refresh to ensure it's not expired
+      
+      const response = await fetch('/api/admin/staff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(newStaff)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create staff member');
+      }
+
+      toast.success('Staff member added to whitelist successfully');
+      setIsModalOpen(false);
+      setNewStaff({
+        email: '',
+        display_role: '',
+        system_role: 'kitchen'
+      });
+    } catch (error: any) {
+      console.error('Add staff error:', error);
+      toast.error(error.message || 'Failed to add staff member');
+    }
+  };
+
+  if (loading) {
+    return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div></div>;
+  }
 
   return (
-    <main className="ml-64 p-10 bg-surface-container-lowest min-h-screen">
-      <header className="flex justify-between items-end mb-12">
+    <div className="max-w-6xl mx-auto p-6">
+      <div className="flex justify-between items-center mb-8">
         <div>
-          <span className="text-[0.75rem] font-label tracking-[0.2em] text-stone-400 uppercase mb-2 block">Team Management</span>
-          <h1 className="text-5xl font-headline text-primary">Staff Directory</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Staff Management</h1>
+          <p className="text-gray-500 mt-2">Manage team members and their roles.</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-2 px-6 py-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors font-medium shadow-sm"
+          >
+            <Plus size={20} />
+            Add Staff
+          </button>
           <div className="relative">
             <input 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-stone-50 border border-stone-200 rounded-xl py-3 pl-12 pr-6 w-80 font-body text-sm outline-none focus:border-primary transition-colors" 
-              placeholder="Search staff, roles..." 
+              className="bg-white border border-gray-200 rounded-xl py-3 pl-12 pr-6 w-80 outline-none focus:border-orange-500 transition-colors" 
+              placeholder="Search by email or role..." 
             />
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400" size={18} />
+            <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
           </div>
-          <button 
-            onClick={() => setShowAddModal(true)}
-            className="bg-primary text-white px-8 py-3 rounded-xl font-bold uppercase tracking-widest flex items-center gap-3 shadow-lg shadow-primary/10 hover:scale-[1.02] transition-transform"
-          >
-            <Plus size={20} />
-            Add Member
-          </button>
         </div>
-      </header>
+      </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-12">
-        <div className="bg-white rounded-3xl p-8 border border-stone-200/30 shadow-sm">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
               <User size={24} />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">Total Staff</p>
-              <p className="text-2xl font-headline text-primary font-bold">{staff.length} Members</p>
+              <p className="text-xs uppercase tracking-wider text-gray-400 mb-1">Total Staff</p>
+              <p className="text-2xl font-bold text-gray-900">{staff.length}</p>
             </div>
           </div>
-          <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(staff.length / 30) * 100}%` }} />
-          </div>
         </div>
-        <div className="bg-white rounded-3xl p-8 border border-stone-200/30 shadow-sm">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
               <Clock size={24} />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-stone-400 mb-1">On Duty Now</p>
-              <p className="text-2xl font-headline text-primary font-bold">{staff.filter(s => s.status === 'On Duty').length} Active</p>
+              <p className="text-xs uppercase tracking-wider text-gray-400 mb-1">On Duty</p>
+              <p className="text-2xl font-bold text-gray-900">{staff.filter(s => s.is_on_duty).length}</p>
             </div>
-          </div>
-          <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
-            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(staff.filter(s => s.status === 'On Duty').length / staff.length) * 100}%` }} />
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {filteredStaff.map(member => (
-          <motion.div 
-            key={member.id}
-            whileHover={{ y: -5 }}
-            className="bg-white rounded-3xl border border-stone-200/30 shadow-sm overflow-hidden group"
-          >
-            <div className="p-8">
-              <div className="flex justify-between items-start mb-6">
-                <div className="relative">
-                  <img 
-                    src={member.avatar} 
-                    className="w-20 h-20 rounded-2xl object-cover" 
-                    referrerPolicy="no-referrer" 
-                  />
-                  <div className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full border-4 border-white ${
-                    member.status === 'On Duty' ? 'bg-emerald-500' : 'bg-stone-300'
-                  }`} />
-                </div>
-              </div>
-              
-              <div className="mb-6">
-                <h3 className="text-2xl font-headline text-primary font-bold mb-1">{member.name}</h3>
-                <span className="text-xs font-label uppercase tracking-widest text-stone-400">{member.role}</span>
-              </div>
-
-              <div className="space-y-4 pt-6 border-t border-stone-50">
-                <div className="flex items-center gap-3 text-sm text-stone-500">
-                  <Mail size={16} className="text-stone-300" />
-                  {member.email}
-                </div>
-                <div className="flex items-center gap-3 text-sm text-stone-500">
-                  <Phone size={16} className="text-stone-300" />
-                  {member.phone}
-                </div>
-                <div className="flex items-center gap-3 text-sm text-stone-500">
-                  <Calendar size={16} className="text-stone-300" />
-                  {member.shift} Shift
-                </div>
-              </div>
-            </div>
-            
-            <div className="px-8 py-4 bg-stone-50/50 flex justify-between items-center">
-              <span className={`text-[10px] font-label uppercase tracking-widest font-bold ${
-                member.status === 'On Duty' ? 'text-emerald-600' : 'text-stone-400'
-              }`}>
-                {member.status}
-              </span>
-              <button 
-                onClick={() => toggleStatus(member.id)}
-                className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
-                  member.status === 'On Duty' 
-                  ? 'bg-stone-200 text-stone-600 hover:bg-stone-300' 
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-600/10'
-                }`}
-              >
-                {member.status === 'On Duty' ? 'Set Off Duty' : 'Set On Duty'}
-              </button>
-            </div>
-          </motion.div>
-        ))}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 text-sm uppercase tracking-wider">
+              <th className="p-4 font-medium">Member</th>
+              <th className="p-4 font-medium">Display Role</th>
+              <th className="p-4 font-medium">System Role</th>
+              <th className="p-4 font-medium">Status</th>
+              <th className="p-4 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {filteredStaff.map(member => (
+              <tr key={member.id} className="hover:bg-gray-50 transition-colors">
+                <td className="p-4">
+                  <div className="flex items-center gap-4">
+                    {member.photo_url ? (
+                      <img src={member.photo_url} alt="" className="w-10 h-10 rounded-full object-cover bg-gray-100" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                        <User size={20} />
+                      </div>
+                    )}
+                    <div>
+                      <p className="font-medium text-gray-900">{member.email}</p>
+                      {member.email === OWNER_EMAIL && (
+                        <span className="text-xs text-orange-600 font-medium flex items-center gap-1">
+                          <Shield size={12} /> Owner
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </td>
+                <td className="p-4 text-gray-600">{member.display_role}</td>
+                <td className="p-4">
+                  <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
+                    member.system_role === 'admin' 
+                      ? 'bg-purple-100 text-purple-700' 
+                      : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {member.system_role}
+                  </span>
+                </td>
+                <td className="p-4">
+                  <button
+                    onClick={() => toggleDutyStatus(member)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                      member.is_on_duty
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Clock size={16} />
+                    {member.is_on_duty ? 'On Duty' : 'Off Duty'}
+                  </button>
+                </td>
+                <td className="p-4 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => removeStaff(member)}
+                      disabled={member.email === OWNER_EMAIL}
+                      className={`p-2 rounded-lg transition-colors ${
+                        member.email === OWNER_EMAIL
+                          ? 'text-gray-300 cursor-not-allowed'
+                          : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                      }`}
+                      title={member.email === OWNER_EMAIL ? 'Cannot remove Owner' : 'Remove Staff'}
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {filteredStaff.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-8 text-center text-gray-500">
+                  {searchQuery ? 'No staff members match your search.' : 'No staff members found.'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {/* Add Member Modal */}
-      <AnimatePresence>
-        {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowAddModal(false)}
-              className="absolute inset-0 bg-primary/20 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-[2.5rem] p-10 shadow-2xl"
-            >
-              <button 
-                onClick={() => setShowAddModal(false)}
-                className="absolute top-8 right-8 p-2 hover:bg-stone-50 rounded-full transition-colors"
-              >
-                <X size={20} className="text-stone-400" />
-              </button>
-              
-              <h2 className="text-3xl font-headline text-primary mb-8 italic">Add Team Member</h2>
-              
-              <form onSubmit={handleAddMember} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Full Name</label>
-                  <input 
-                    required
-                    value={newMember.name}
-                    onChange={e => setNewMember({...newMember, name: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="e.g. John Doe"
-                  />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Role</label>
-                    <select 
-                      value={newMember.role}
-                      onChange={e => setNewMember({...newMember, role: e.target.value})}
-                      className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    >
-                      <option>Barista</option>
-                      <option>Chef</option>
-                      <option>Server</option>
-                      <option>Sommelier</option>
-                      <option>Manager</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Shift</label>
-                    <select 
-                      value={newMember.shift}
-                      onChange={e => setNewMember({...newMember, shift: e.target.value})}
-                      className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    >
-                      <option>Morning</option>
-                      <option>Afternoon</option>
-                      <option>Evening</option>
-                      <option>Night</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Email Address</label>
-                  <input 
-                    required
-                    type="email"
-                    value={newMember.email}
-                    onChange={e => setNewMember({...newMember, email: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="john@smartcafe.com"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Phone Number</label>
-                  <input 
-                    required
-                    value={newMember.phone}
-                    onChange={e => setNewMember({...newMember, phone: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="+1 234 567 8900"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-label font-bold tracking-widest uppercase text-stone-400">Avatar URL</label>
-                  <input 
-                    value={newMember.avatar}
-                    onChange={e => setNewMember({...newMember, avatar: e.target.value})}
-                    className="w-full bg-stone-50 border-b border-stone-200 py-3 px-4 font-body text-primary outline-none focus:border-primary transition-colors"
-                    placeholder="https://picsum.photos/..."
-                  />
-                </div>
-
-                <button className="w-full bg-primary text-white py-5 rounded-2xl font-bold uppercase tracking-widest shadow-xl shadow-primary/20 mt-4 hover:scale-[1.01] active:scale-95 transition-all">
-                  Add to Directory
-                </button>
-              </form>
-            </motion.div>
+      <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="text-yellow-600 mt-0.5" size={20} />
+          <div className="text-sm text-yellow-800">
+            <p className="font-medium mb-1">Owner Immunity Active</p>
+            <p>The Owner account ({OWNER_EMAIL}) cannot be removed or demoted for security reasons.</p>
           </div>
-        )}
-      </AnimatePresence>
-    </main>
+        </div>
+      </div>
+
+      {/* Add Staff Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">Add New Staff Member</h2>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
+                <input
+                  type="email"
+                  value={newStaff.email}
+                  onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl outline-none focus:border-orange-500 transition-colors"
+                  placeholder="staff@smartcafe.com"
+                />
+                <p className="text-xs text-gray-500 mt-1">This user must sign in with Google to activate their account</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Display Role</label>
+                <input
+                  type="text"
+                  value={newStaff.display_role}
+                  onChange={(e) => setNewStaff({ ...newStaff, display_role: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl outline-none focus:border-orange-500 transition-colors"
+                  placeholder="e.g., Barista, Chef, Manager"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">System Role</label>
+                <select
+                  value={newStaff.system_role}
+                  onChange={(e) => setNewStaff({ ...newStaff, system_role: e.target.value as 'admin' | 'kitchen' })}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl outline-none focus:border-orange-500 transition-colors"
+                >
+                  <option value="kitchen">Kitchen Staff</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="flex-1 px-5 py-3 text-gray-600 hover:bg-gray-100 rounded-xl font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addStaff}
+                  className="flex-1 px-5 py-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors font-medium"
+                >
+                  Add to Whitelist
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

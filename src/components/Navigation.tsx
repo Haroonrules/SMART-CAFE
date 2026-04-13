@@ -1,20 +1,41 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, NavLink as RouterNavLink } from 'react-router-dom';
 import { ShoppingBag, User, Bell, Table, Menu as MenuIcon, Receipt, Wine, Sparkles, LayoutDashboard, Package, Users, Menu, X, TrendingUp } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { auth } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 
 export function Navbar() {
   const location = useLocation();
   const [isAdminMobileMenuOpen, setIsAdminMobileMenuOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [userRole, setUserRole] = useState<string>('admin'); // Default to admin
   const isAdmin = location.pathname.startsWith('/admin');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const tokenResult = await user.getIdTokenResult();
+          // Check system_role claim (kitchen or admin)
+          const role = tokenResult.claims.system_role || 'admin';
+          setUserRole(role);
+        } catch (error) {
+          console.error('Error getting user role:', error);
+          setUserRole('admin');
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   if (isAdmin) {
     return (
       <>
         {/* Mobile Admin Header */}
         <header className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white border-b border-stone-200/15 flex items-center justify-between px-6 z-[60]">
-          <Link to="/admin/dashboard" className="text-lg font-headline italic text-primary">Admin Portal</Link>
+          <Link to="/admin/orders" className="text-lg font-headline italic text-primary">Admin Portal</Link>
           <button 
             onClick={() => setIsAdminMobileMenuOpen(!isAdminMobileMenuOpen)}
             className="p-2 text-primary hover:bg-stone-50 rounded-xl transition-colors"
@@ -34,12 +55,18 @@ export function Navbar() {
           </div>
           <div className="lg:hidden h-16" /> {/* Spacer for mobile header */}
           <nav className="flex-1 space-y-1">
-            <AdminNavLink to="/admin/dashboard" icon={<LayoutDashboard size={20} />} label="Dashboard" onClick={() => setIsAdminMobileMenuOpen(false)} />
-            <AdminNavLink to="/admin/orders" icon={<Receipt size={20} />} label="Live Orders" onClick={() => setIsAdminMobileMenuOpen(false)} />
-            <AdminNavLink to="/admin/menu" icon={<Package size={20} />} label="Menu Management" onClick={() => setIsAdminMobileMenuOpen(false)} />
-            <AdminNavLink to="/admin/wines" icon={<Wine size={20} />} label="Wine Cellar" onClick={() => setIsAdminMobileMenuOpen(false)} />
-            <AdminNavLink to="/admin/staff" icon={<Users size={20} />} label="Staff Directory" onClick={() => setIsAdminMobileMenuOpen(false)} />
-            <AdminNavLink to="/admin/insights" icon={<TrendingUp size={20} />} label="AI Analytics" onClick={() => setIsAdminMobileMenuOpen(false)} />
+            {userRole === 'admin' && (
+              <>
+                <AdminNavLink to="/admin/orders" icon={<Receipt size={20} />} label="Live Orders" onClick={() => setIsAdminMobileMenuOpen(false)} />
+                <AdminNavLink to="/admin/menu" icon={<Package size={20} />} label="Menu Management" onClick={() => setIsAdminMobileMenuOpen(false)} />
+                <AdminNavLink to="/admin/wines" icon={<Wine size={20} />} label="Wine Cellar" onClick={() => setIsAdminMobileMenuOpen(false)} />
+                <AdminNavLink to="/admin/staff" icon={<Users size={20} />} label="Staff Directory" onClick={() => setIsAdminMobileMenuOpen(false)} />
+                <AdminNavLink to="/admin/insights" icon={<TrendingUp size={20} />} label="AI Analytics" onClick={() => setIsAdminMobileMenuOpen(false)} />
+              </>
+            )}
+            {userRole === 'kitchen' && (
+              <AdminNavLink to="/admin/orders" icon={<Receipt size={20} />} label="Live Orders" onClick={() => setIsAdminMobileMenuOpen(false)} />
+            )}
           </nav>
         </aside>
 

@@ -1,19 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, ShoppingBag, ArrowRight, Plus, X, Check, Loader2, Send } from 'lucide-react';
-import { MenuItem, ChatMessage } from '../types';
+import { MenuItem, ChatMessage, WineItem } from '../types';
 import { useCart } from '../CartContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { chatWithAI } from '../lib/ai';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
 export function WineListScreen() {
   const { addItem, items, subtotal } = useCart();
   const [wineItems, setWineItems] = useState<MenuItem[]>([]);
+  const [rawWines, setRawWines] = useState<WineItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('All');
-  
+  const [selectedSizes, setSelectedSizes] = useState<Record<string, 'glass' | 'bottle'>>({});
+
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     {
@@ -35,23 +36,48 @@ export function WineListScreen() {
   }, [chatHistory]);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'menuItems'), 
-      where('is_active', '==', true),
-      where('category', '==', 'Wine')
-    );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedItems = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as MenuItem[];
-      setWineItems(fetchedItems);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'menuItems');
-    });
+    // Fetch wines from backend API instead of direct Firestore
+    const fetchWines = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch('/api/wines');
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch wines');
+        }
 
-    return () => unsubscribe();
+        const data = await response.json();
+        const fetchedWines: WineItem[] = data.wines || [];
+        
+        // Store raw wine data for price reference
+        setRawWines(fetchedWines);
+        
+        // Map wine schema to MenuItem-compatible format for UI consistency
+        const availableWines: MenuItem[] = fetchedWines.map(wine => ({
+          id: wine.id,
+          name: wine.name,
+          description: wine.tasting_notes || '',
+          price: wine.price_glass || wine.price_bottle || 0,
+          category: 'Wine' as const,
+          image: wine.image_url || '',
+          customizations: [],
+          tags: [wine.type, wine.region].filter(Boolean),
+          badge: wine.vintage || undefined,
+          isAvailable: true,
+          is_active: true,
+          is_available: true
+        }));
+        
+        setWineItems(availableWines);
+        setLoading(false);
+      } catch (error: any) {
+        console.error('Error fetching wines:', error);
+        handleFirestoreError(error, OperationType.LIST, 'wines');
+        setLoading(false);
+      }
+    };
+
+    fetchWines();
   }, []);
 
   const handleChatSubmit = async () => {
@@ -74,7 +100,7 @@ export function WineListScreen() {
         role: msg.role,
         content: msg.text
       }));
-      const result = await chatWithAI(userMessage, 'wine', wineItems, historyForApi);
+      const result = await chatWithAI(userMessage, 'wine', rawWines, historyForApi);
       
       const assistantChat: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -101,7 +127,31 @@ export function WineListScreen() {
   };
 
   const handleAddToCart = (item: MenuItem) => {
-    addItem(item);
+    // Find the original wine data to get both prices
+    const wine = rawWines.find(w => w.id === item.id);
+    if (!wine) return;
+    
+    const size = selectedSizes[wine.id] || 'glass';
+    const price = size === 'glass' ? wine.price_glass : wine.price_bottle;
+    const sizeLabel = size === 'glass' ? '(Glass)' : '(Bottle)';
+    
+    // Create cart item with size information
+    const cartItem: MenuItem = {
+      id: `${wine.id}-${size}`,
+      name: `${wine.name} ${sizeLabel}`,
+      description: wine.tasting_notes || '',
+      price: price,
+      category: 'Wine' as const,
+      image: wine.image_url || '',
+      customizations: [],
+      tags: [wine.type, wine.region].filter(Boolean),
+      badge: wine.vintage || undefined,
+      isAvailable: true,
+      is_active: true,
+      is_available: true
+    };
+    
+    addItem(cartItem);
   };
 
   const filteredItems = wineItems.filter(item => filter === 'All' || item.tags?.includes(filter));
@@ -179,10 +229,10 @@ export function WineListScreen() {
                       <p className="text-xs font-label uppercase tracking-widest opacity-70 mb-2">Recommended for you:</p>
                       {msg.items.map(item => (
                         <div key={item.id} className="bg-surface-container-lowest rounded-xl p-3 flex gap-4 items-center border border-outline-variant/20">
-                          <img src={item.image} alt={item.name} className="w-16 h-16 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                          <img src={item.image_url || item.image} alt={item.name} className="w-16 h-16 rounded-lg object-cover" referrerPolicy="no-referrer" />
                           <div className="flex-1">
                             <h4 className="font-headline text-primary text-lg">{item.name}</h4>
-                            <p className="text-sm text-stone-500">${item.price.toFixed(2)}</p>
+                            <p className="text-sm text-stone-500">${((item as any).price || (item as any).price_glass || 0).toFixed(2)}</p>
                           </div>
                           <button
                             onClick={() => handleAddToCart(item)}
@@ -257,6 +307,11 @@ export function WineListScreen() {
           </div>
         </div>
 
+        {loading ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
           {filteredItems.map((item) => (
             <motion.div 
@@ -295,20 +350,51 @@ export function WineListScreen() {
                   </p>
                 </div>
                 
-                <div className="flex items-center justify-center sm:justify-start gap-8">
-                  <span className="text-2xl font-headline italic text-primary">${item.price.toFixed(2)}</span>
-                  <button 
-                    onClick={() => handleAddToCart(item)}
-                    className="bg-primary text-white px-8 py-3 rounded-xl font-label text-[0.7rem] uppercase tracking-widest font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
-                  >
-                    Add to Ritual
-                    <Plus size={14} />
-                  </button>
+                <div className="space-y-4">
+                  {/* Size Selection */}
+                  <div className="flex items-center justify-center sm:justify-start gap-3">
+                    <button
+                      onClick={() => setSelectedSizes(prev => ({ ...prev, [item.id]: 'glass' }))}
+                      className={`px-4 py-2 rounded-lg font-label text-xs uppercase tracking-wider transition-all ${
+                        (selectedSizes[item.id] || 'glass') === 'glass'
+                          ? 'bg-primary text-white shadow-md'
+                          : 'bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-high'
+                      }`}
+                    >
+                      Glass
+                    </button>
+                    <button
+                      onClick={() => setSelectedSizes(prev => ({ ...prev, [item.id]: 'bottle' }))}
+                      className={`px-4 py-2 rounded-lg font-label text-xs uppercase tracking-wider transition-all ${
+                        selectedSizes[item.id] === 'bottle'
+                          ? 'bg-primary text-white shadow-md'
+                          : 'bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-high'
+                      }`}
+                    >
+                      Bottle
+                    </button>
+                  </div>
+                  
+                  <div className="flex items-center justify-center sm:justify-start gap-8">
+                    <span className="text-2xl font-headline italic text-primary">
+                      ${(selectedSizes[item.id] === 'bottle' 
+                        ? rawWines.find(w => w.id === item.id)?.price_bottle 
+                        : rawWines.find(w => w.id === item.id)?.price_glass || item.price).toFixed(2)}
+                    </span>
+                    <button 
+                      onClick={() => handleAddToCart(item)}
+                      className="bg-primary text-white px-8 py-3 rounded-xl font-label text-[0.7rem] uppercase tracking-widest font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
+                    >
+                      Add to Ritual
+                      <Plus size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
           ))}
         </div>
+        )}
       </section>
 
       {/* Floating Cart Button */}

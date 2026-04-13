@@ -20,16 +20,35 @@ export function CartProvider({ children }: { children: ReactNode }) {
     let total = item.price;
     if (!selectedOptions || !item.customizations) return total;
 
-    Object.entries(selectedOptions).forEach(([groupId, optionIds]) => {
-      const group = item.customizations?.find(g => g.id === groupId);
-      if (!group) return;
+    // Check if customizations is a flat array (new schema) or nested groups (old schema)
+    const isFlatArray = item.customizations.length > 0 && 'name' in item.customizations[0];
 
-      const ids = Array.isArray(optionIds) ? optionIds : [optionIds];
-      ids.forEach(id => {
-        const option = group.options.find(o => o.id === id);
-        if (option?.price) total += option.price;
+    if (isFlatArray) {
+      // Handle flat array schema: [{ name, extra_price }]
+      Object.entries(selectedOptions).forEach(([optionId, isSelected]) => {
+        if (isSelected === true || isSelected === 'true') {
+          const customization = item.customizations?.find((c: any) => {
+            const idx = parseInt(optionId.replace('custom_', ''));
+            return item.customizations?.[idx] === c;
+          });
+          if (customization && (customization as any).extra_price) {
+            total += (customization as any).extra_price;
+          }
+        }
       });
-    });
+    } else {
+      // Handle nested group schema (legacy)
+      Object.entries(selectedOptions).forEach(([groupId, optionIds]) => {
+        const group = item.customizations?.find(g => g.id === groupId);
+        if (!group) return;
+
+        const ids = Array.isArray(optionIds) ? optionIds : [optionIds];
+        ids.forEach(id => {
+          const option = group.options.find(o => o.id === id);
+          if (option?.price) total += option.price;
+        });
+      });
+    }
     return total;
   };
 

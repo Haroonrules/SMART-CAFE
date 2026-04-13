@@ -1,21 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCart } from '../CartContext';
 import { Trash2, Minus, Plus, ShoppingBag, CreditCard, Wallet, Loader2, LogIn } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CartItem } from '../types';
 import { collection, addDoc, doc, updateDoc, increment } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import { toast } from 'sonner';
-import { useAuth } from '../AuthContext';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 
 export function CartScreen() {
   const { items, removeItem, updateQuantity, subtotal, getItemPrice, clearCart } = useCart();
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [user, setUser] = useState<any>(null);
   const tax = subtotal * 0.08;
   const total = subtotal + tax;
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const getOptionNames = (item: CartItem) => {
     if (!item.selectedOptions || !item.customizations) return null;
@@ -36,9 +43,40 @@ export function CartScreen() {
   };
 
   const handleSignIn = async () => {
+    const provider = new GoogleAuthProvider();
     try {
-      await signInWithGoogle();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      
       toast.success('Signed in successfully');
+      
+      // Sync with staff whitelist - check if this Google account is a whitelisted staff member
+      try {
+        const token = await user.getIdToken(true); // Force refresh to get latest claims
+        
+        const response = await fetch('/api/auth/sync-staff', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.isStaff) {
+          console.log(`[CART] Staff account synced: ${data.system_role}`);
+          toast.success(`Welcome back, ${data.display_role}!`);
+          
+          // Force token refresh to ensure custom claims are loaded
+          await user.getIdToken(true);
+        } else {
+          console.log('[CART] Not a staff member or sync failed:', data.error);
+        }
+      } catch (syncError) {
+        console.error('[CART] Staff sync error:', syncError);
+        // Don't block sign-in if sync fails - user can still use customer features
+      }
     } catch (error) {
       console.error('Sign in error', error);
       toast.error('Failed to sign in');
