@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
-import { User, Mail, Shield, Clock, Trash2, X, AlertCircle, Plus } from 'lucide-react';
+import { User, Shield, Clock, Trash2, X, AlertCircle, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface StaffMember {
@@ -80,7 +80,6 @@ export function AdminStaffScreen() {
 
       toast.success(`${member.email} is now ${!member.is_on_duty ? 'On Duty' : 'Off Duty'}`);
     } catch (error: any) {
-      console.error('Toggle duty error:', error);
       toast.error(error.message || 'Failed to update duty status');
       handleFirestoreError(error, OperationType.UPDATE, `staff/${member.uid}`);
     }
@@ -98,7 +97,7 @@ export function AdminStaffScreen() {
     }
 
     try {
-      // Use Firebase auth.currentUser directly with guaranteed fresh token
+      // Force token refresh: Ensures latest custom claims are propagated before destructive administrative actions
       const currentUser = auth.currentUser;
       
       if (!currentUser) {
@@ -106,7 +105,6 @@ export function AdminStaffScreen() {
         return;
       }
 
-      // Force token refresh to ensure we have a valid, non-expired token
       const token = await currentUser.getIdToken(true);
       
       if (!token) {
@@ -130,7 +128,6 @@ export function AdminStaffScreen() {
       // Update state manually instead of reloading the page
       setStaff(prev => prev.filter(s => s.id !== member.id));
     } catch (error: any) {
-      console.error('Remove staff error:', error);
       toast.error(error.message || 'Failed to remove staff member');
       handleFirestoreError(error, OperationType.UPDATE, `staff/${member.uid}`);
     }
@@ -175,7 +172,6 @@ export function AdminStaffScreen() {
         system_role: 'kitchen'
       });
     } catch (error: any) {
-      console.error('Add staff error:', error);
       toast.error(error.message || 'Failed to add staff member');
     }
   };

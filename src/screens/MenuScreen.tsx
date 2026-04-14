@@ -4,7 +4,7 @@ import { MenuItem, CustomizationGroup, ChatMessage } from '../types';
 import { useCart } from '../CartContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
-import { generateMoodRecommendation, chatWithAI } from '../lib/ai';
+import { chatWithAI } from '../lib/ai';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
@@ -96,7 +96,6 @@ export function MenuScreen() {
       const user = auth.currentUser;
       
       if (!user) {
-        console.log('[RITUAL] No authenticated user, skipping ritual');
         return;
       }
 
@@ -119,7 +118,6 @@ export function MenuScreen() {
 
         const data = await response.json();
         setRitualData(data);
-        console.log('[RITUAL] Loaded:', data.message);
       } catch (error: any) {
         console.error('[RITUAL] Error fetching ritual:', error);
         // Don't show toast for ritual errors - it's a nice-to-have feature

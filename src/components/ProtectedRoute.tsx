@@ -30,13 +30,9 @@ export function ProtectedRoute({ children, requireAdmin = false }: ProtectedRout
           const isAdmin = !!tokenResult.claims.admin;
           const isKitchen = !!tokenResult.claims.kitchen;
           
-          console.log('[PROTECTED-ROUTE] User claims:', { isAdmin, isKitchen, email: user.email });
-          console.log('[PROTECTED-ROUTE] Current path:', location.pathname);
-          
-          // Path-based RBAC logic
+          // Path-based RBAC: Enforces strict physical boundaries for kitchen staff to prevent unauthorized access to financial admin views
           if (isAdmin) {
             // Admin can access EVERYTHING
-            console.log('[PROTECTED-ROUTE] Admin access granted');
             setIsAuthorized(true);
           } else if (isKitchen) {
             // Kitchen staff can ONLY access /admin/orders
@@ -45,16 +41,9 @@ export function ProtectedRoute({ children, requireAdmin = false }: ProtectedRout
               location.pathname === path || location.pathname.startsWith(path + '/')
             );
             
-            if (isAllowedPath) {
-              console.log('[PROTECTED-ROUTE] Kitchen staff access granted to:', location.pathname);
-              setIsAuthorized(true);
-            } else {
-              console.log('[PROTECTED-ROUTE] Kitchen staff blocked from:', location.pathname);
-              setIsAuthorized(false);
-            }
+            setIsAuthorized(isAllowedPath);
           } else {
             // No admin or kitchen claim - not authorized
-            console.log('[PROTECTED-ROUTE] No valid claims found');
             setIsAuthorized(false);
           }
         } catch (error) {

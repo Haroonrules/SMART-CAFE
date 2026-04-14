@@ -6,8 +6,6 @@ import { createRequire } from "module";
 import Groq from "groq-sdk";
 import dotenv from "dotenv";
 import cors from "cors";
-import { collection, getDocs, query, where } from "firebase/firestore";
-import { db } from "./src/firebase.js";
 import admin from "firebase-admin";
 
 const require = createRequire(import.meta.url);
@@ -16,38 +14,27 @@ dotenv.config({ override: true });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Firebase Admin SDK for token verification
+// Initialize Firebase Admin SDK
 try {
-  // Check if already initialized by trying to get the default app
-  const existingApp = admin.app();
-  console.log("✅ Firebase Admin SDK already initialized");
+  admin.app();
 } catch (error) {
-  // App not initialized, so initialize it
   try {
     const serviceAccountPath =
       process.env.FIREBASE_ADMIN_SDK_PATH || "./firebase-admin-sdk.json";
-    console.log(
-      `Attempting to load service account from: ${serviceAccountPath}`,
-    );
-
     const serviceAccount = require(serviceAccountPath);
-    console.log("✅ Service account loaded successfully");
 
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
     });
-    console.log("✅ Firebase Admin SDK initialized for token verification");
   } catch (initError: any) {
     console.warn(
-      "⚠️  Firebase Admin SDK not initialized. Admin token verification will not work.",
+      "Firebase Admin SDK initialization failed. Admin features will be disabled.",
     );
-    console.error("Initialization error:", initError.message);
   }
 }
 
 /**
  * Middleware to verify admin custom claims in Firebase ID token
- * Usage: app.post("/api/admin/...", verifyAdminToken, handler)
  */
 async function verifyAdminToken(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
@@ -61,9 +48,6 @@ async function verifyAdminToken(req: any, res: any, next: any) {
   const token = authHeader.split(" ")[1];
 
   try {
-    console.log("Verifying admin token...");
-
-    // Verify the ID token with timeout
     const decodedToken = await Promise.race([
       admin.auth().verifyIdToken(token),
       new Promise((_, reject) =>
@@ -71,17 +55,11 @@ async function verifyAdminToken(req: any, res: any, next: any) {
       ),
     ]);
 
-    console.log("Token verified for user:", decodedToken.email);
-
-    // Check for admin custom claim
     if (decodedToken.admin !== true) {
-      console.log("User is not admin:", decodedToken.email);
       return res.status(403).json({ error: "Admin privileges required" });
     }
 
-    // Attach user info to request for use in route handler
     req.user = decodedToken;
-    console.log("Admin verification successful, proceeding to handler");
     next();
   } catch (error: any) {
     console.error("Token verification error:", error.message);
@@ -104,13 +82,8 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // Initialize Groq
+  // Initialize Groq Client
   const groqApiKey = process.env.GROQ_API_KEY;
-  if (groqApiKey) {
-    console.log(`Groq API Key loaded: ${groqApiKey.substring(0, 7)}...`);
-  } else {
-    console.error("CRITICAL: No Groq API Key found!");
-  }
   const groq = new Groq({ apiKey: groqApiKey || "" });
 
   // API Routes
@@ -123,23 +96,20 @@ async function startServer() {
     } = req.body;
 
     try {
-      console.log(`Attempting chat with Groq model: llama-3.1-8b-instant`);
-
       const isWine = menuType === "wine";
 
-      // Fetch menu items from Firestore - LIVE DATABASE INJECTION
+      // Fetch live inventory from Firestore
       let activeMenu: any[] = [];
       if (isWine) {
         const winesSnapshot = await admin.firestore().collection("wines").get();
         activeMenu = winesSnapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
-          price: doc.data().price_glass || doc.data().price_bottle || 0, // Add default price for frontend compatibility
+          price: doc.data().price_glass || doc.data().price_bottle || 0,
           category: "Wine",
           description: doc.data().tasting_notes,
         }));
       } else {
-        // CRITICAL: Only fetch AVAILABLE menu items to prevent hallucinations
         const menuSnapshot = await admin
           .firestore()
           .collection("menu_items")
@@ -151,11 +121,7 @@ async function startServer() {
         }));
       }
 
-      console.log(
-        `[CHAT] Loaded ${activeMenu.length} live menu items from Firestore`,
-      );
-
-      // Calculate alcohol limit (e.g., limit to 3 drinks)
+      // Calculate alcohol limit
       const alcoholCount = cartItems
         .filter((item: any) =>
           activeMenu.some((w) => w.id === item.id && w.category === "Wine"),
@@ -212,10 +178,6 @@ Use this exact schema:
 {"text": "Your helpful response message here", "recommended_item_ids": ["1", "2", "3"]} 
 Only recommend items that exist in the LIVE MENU INVENTORY above.`;
       }
-
-      console.log(`System Instruction Length: ${systemInstruction.length}`);
-      console.log(`User Message: ${message}`);
-      console.log(`Alcohol Count: ${alcoholCount}, Over Limit: ${overLimit}`);
 
       const formattedHistory = history.map((msg: any) => ({
         role: msg.role === "user" ? "user" : "assistant",
@@ -449,8 +411,7 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
   });
 
   /**
-   * Endpoint to delete a menu item (Admin Only - HARD DELETE)
-   * This permanently removes the item from Firestore. Use toggle availability for "Sold Out".
+   * Endpoint to delete a menu item (Admin Only - Hard Delete)
    */
   app.delete("/api/menu/:id", verifyAdminToken, async (req, res) => {
     try {
@@ -507,7 +468,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
 
   /**
    * Endpoint to sync Google Auth user with staff whitelist
-   * Called immediately after successful Google Sign-In
    */
   app.post("/api/auth/sync-staff", async (req, res) => {
     try {
@@ -519,7 +479,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
 
       const token = authHeader.split("Bearer ")[1];
 
-      // Verify the Google Auth JWT token
       const decodedToken = await admin.auth().verifyIdToken(token);
       const userEmail = decodedToken.email?.toLowerCase();
       const uid = decodedToken.uid;
@@ -528,9 +487,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         return res.status(400).json({ error: "Email not found in token" });
       }
 
-      console.log(`[SYNC-STAFF] Syncing user: ${userEmail} (UID: ${uid})`);
-
-      // Query staff collection for this email
       const staffSnapshot = await admin
         .firestore()
         .collection("staff")
@@ -538,7 +494,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         .get();
 
       if (staffSnapshot.empty) {
-        console.log(`[SYNC-STAFF] No staff record found for ${userEmail}`);
         return res.status(404).json({
           error:
             "No staff record found. Contact admin to be added to the whitelist.",
@@ -546,14 +501,10 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         });
       }
 
-      // Get the staff document
       const staffDoc = staffSnapshot.docs[0];
       const staffData = staffDoc.data();
       const systemRole = staffData.system_role;
 
-      console.log(`[SYNC-STAFF] Found staff record: ${systemRole} role`);
-
-      // Update the staff document with the actual UID from Google Auth
       await admin
         .firestore()
         .collection("staff")
@@ -564,15 +515,10 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           updated_at: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-      // Assign Custom Claims for RBAC
       await admin.auth().setCustomUserClaims(uid, {
         [systemRole]: true,
-        staff: true, // Generic staff claim for basic access
+        staff: true,
       });
-
-      console.log(
-        `[SYNC-STAFF] Successfully synced ${userEmail} with ${systemRole} role and custom claims`,
-      );
 
       res.json({
         success: true,
@@ -597,8 +543,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
 
   /**
    * Endpoint to add staff member to whitelist (Admin only)
-   * This creates a pending staff document. When the user signs in with Google,
-   * their UID will be linked via /api/auth/sync-staff
    */
   app.post("/api/admin/staff", verifyAdminToken, async (req, res) => {
     try {
@@ -753,38 +697,61 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
     try {
       const { docId } = req.params;
 
-      console.log(`[DELETE-STAFF] Attempting to delete staff document: ${docId}`);
-
-      // Exact document lookup by Firestore Document ID
+      // Enforce Owner Immunity: Prevents privilege escalation where administrative users could disable the root account
       const staffRef = admin.firestore().collection("staff").doc(docId);
       const doc = await staffRef.get();
 
       if (!doc.exists) {
-        console.log(`[DELETE-STAFF] No staff document found with ID: ${docId}`);
         return res.status(404).json({ error: "Staff member not found" });
       }
 
       const staffData = doc.data();
       const uid = staffData?.uid;
 
+      // If we have a UID, fetch the Firebase Auth user and check for Owner immunity
+      if (uid) {
+        try {
+          const userRecord = await admin.auth().getUser(uid);
+          const OWNER_EMAIL = process.env.OWNER_EMAIL;
+
+          if (!OWNER_EMAIL) {
+            console.warn(
+              `[SECURITY WARNING] OWNER_EMAIL environment variable is not set on the server!`,
+            );
+          } else if (userRecord.email === OWNER_EMAIL) {
+            console.error(
+              `[SECURITY] Mutiny attempt! Someone tried to delete the Owner: ${uid}`,
+            );
+            return res
+              .status(403)
+              .json({ error: "Access Denied: The Owner cannot be removed." });
+          }
+        } catch (authError: any) {
+          // User might not exist in Auth yet (whitelist-only), continue with deletion
+          console.warn(
+            `[DELETE-STAFF] Could not verify Auth user for Owner immunity check: ${authError.message}`,
+          );
+        }
+      }
+
       // Try to disable the Firebase Auth user if uid exists
       if (uid) {
         try {
           await admin.auth().updateUser(uid, { disabled: true });
-          console.log(`[DELETE-STAFF] Disabled Firebase Auth user: ${uid}`);
         } catch (authError: any) {
           // User might not exist in Auth yet (whitelist-only), that's okay
-          console.warn(`[DELETE-STAFF] Could not disable Auth user (may not exist): ${authError.message}`);
+          console.warn(
+            `[DELETE-STAFF] Could not disable Auth user (may not exist): ${authError.message}`,
+          );
         }
       }
 
       // Unconditionally delete the Firestore document
       await staffRef.delete();
-      console.log(`[DELETE-STAFF] Deleted staff document: ${docId}`);
 
-      res.json({ 
+      res.json({
         success: true,
-        message: "Staff member removed successfully"
+        message: "Staff member removed successfully",
       });
     } catch (error: any) {
       console.error("[DELETE-STAFF] Error removing staff:", error);
@@ -816,28 +783,28 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       try {
         decodedToken = await admin.auth().verifyIdToken(token);
       } catch (tokenError: any) {
-        console.error("[RITUAL] Token verification failed:", tokenError.message);
+        console.error(
+          "[RITUAL] Token verification failed:",
+          tokenError.message,
+        );
         return res.status(401).json({ error: "Invalid or expired token" });
       }
 
       const userId = decodedToken.uid;
-      console.log(`[RITUAL] Generating ritual for user: ${userId}`);
 
       // Get current local hour (0-23)
       const now = new Date();
       const currentHour = now.getHours();
-      
-      // Define time slots
-      let currentTimeSlot: 'morning' | 'lunch' | 'evening';
-      if (currentHour >= 5 && currentHour < 11) {
-        currentTimeSlot = 'morning';
-      } else if (currentHour >= 11 && currentHour < 16) {
-        currentTimeSlot = 'lunch';
-      } else {
-        currentTimeSlot = 'evening';
-      }
 
-      console.log(`[RITUAL] Current time slot: ${currentTimeSlot} (${currentHour}:00)`);
+      // Define time slots
+      let currentTimeSlot: "morning" | "lunch" | "evening";
+      if (currentHour >= 5 && currentHour < 11) {
+        currentTimeSlot = "morning";
+      } else if (currentHour >= 11 && currentHour < 16) {
+        currentTimeSlot = "lunch";
+      } else {
+        currentTimeSlot = "evening";
+      }
 
       // Query user's past completed orders
       const ordersSnapshot = await admin
@@ -847,12 +814,8 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         .where("status", "==", "completed")
         .get();
 
-      console.log(`[RITUAL] Found ${ordersSnapshot.size} completed orders`);
-
       // If no orders at all, return fallback recommendation
       if (ordersSnapshot.empty) {
-        console.log("[RITUAL] New user - returning default popular item");
-        
         // Fetch a hardcoded popular item from menu_items
         const popularItemSnapshot = await admin
           .firestore()
@@ -877,7 +840,7 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           fallbackItem = {
             id: "fallback",
             name: "Velvet Latte",
-            price: 4.50,
+            price: 4.5,
             image_url: null,
             description: "Our signature smooth latte",
             category: "Drinks",
@@ -893,13 +856,16 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       }
 
       // Iterate through orders and score items by time slot
-      const itemScores: Record<string, { 
-        itemId: string; 
-        name: string; 
-        score: number; 
-        orderCount: number;
-        lastOrdered?: any;
-      }> = {};
+      const itemScores: Record<
+        string,
+        {
+          itemId: string;
+          name: string;
+          score: number;
+          orderCount: number;
+          lastOrdered?: any;
+        }
+      > = {};
 
       let totalOrdersInTimeSlot = 0;
       let totalOrdersAllTime = 0;
@@ -914,7 +880,10 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         if (timestamp?.toDate) {
           // Firestore Timestamp
           orderHour = timestamp.toDate().getHours();
-        } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+        } else if (
+          typeof timestamp === "string" ||
+          typeof timestamp === "number"
+        ) {
           // ISO string or Unix timestamp
           orderHour = new Date(timestamp).getHours();
         } else {
@@ -923,30 +892,29 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         }
 
         // Determine which time slot this order belongs to
-        let orderTimeSlot: 'morning' | 'lunch' | 'evening';
+        let orderTimeSlot: "morning" | "lunch" | "evening";
         if (orderHour >= 5 && orderHour < 11) {
-          orderTimeSlot = 'morning';
+          orderTimeSlot = "morning";
         } else if (orderHour >= 11 && orderHour < 16) {
-          orderTimeSlot = 'lunch';
+          orderTimeSlot = "lunch";
         } else {
-          orderTimeSlot = 'evening';
+          orderTimeSlot = "evening";
         }
 
         // Only count items from orders in the CURRENT time slot
         const isMatchingTimeSlot = orderTimeSlot === currentTimeSlot;
-        
+
         if (isMatchingTimeSlot) {
           totalOrdersInTimeSlot++;
         }
 
         // Process items in this order (handle both array and stringified JSON)
         let items: any[] = [];
-        if (typeof order.items === 'string') {
-          try { 
-            items = JSON.parse(order.items); 
-          } catch (e) { 
-            console.warn('[RITUAL] Failed to parse items string:', e);
-            items = []; 
+        if (typeof order.items === "string") {
+          try {
+            items = JSON.parse(order.items);
+          } catch (e) {
+            items = [];
           }
         } else if (Array.isArray(order.items)) {
           items = order.items;
@@ -972,16 +940,16 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           if (isMatchingTimeSlot) {
             itemScores[itemId].score += item.quantity || 1;
             itemScores[itemId].orderCount++;
-            
+
             // Update last ordered timestamp if this is more recent
             if (order.created_at) {
-              const existingDate = itemScores[itemId].lastOrdered?.toDate 
+              const existingDate = itemScores[itemId].lastOrdered?.toDate
                 ? itemScores[itemId].lastOrdered.toDate()
                 : new Date(itemScores[itemId].lastOrdered);
-              const newDate = order.created_at.toDate 
+              const newDate = order.created_at.toDate
                 ? order.created_at.toDate()
                 : new Date(order.created_at);
-              
+
               if (newDate > existingDate) {
                 itemScores[itemId].lastOrdered = order.created_at;
               }
@@ -989,8 +957,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           }
         });
       });
-
-      console.log(`[RITUAL] Time-slot analysis: ${totalOrdersInTimeSlot}/${totalOrdersAllTime} orders match ${currentTimeSlot}`);
 
       // Find the winning item
       let winningItemId: string | null = null;
@@ -1006,20 +972,19 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
 
       // Fallback: If no orders in current time slot, use all-time favorite
       if (!winningItemId || highestScore === 0) {
-        console.log("[RITUAL] No orders in current time slot - falling back to all-time favorite");
-        
         // Re-scan all orders without time filter
         const allTimeScores: Record<string, number> = {};
-        
+
         ordersSnapshot.forEach((doc) => {
           const order = doc.data();
           const items = Array.isArray(order.items) ? order.items : [];
-          
+
           items.forEach((item: any) => {
             const itemId = item.item_id || item.id;
             if (!itemId) return;
-            
-            allTimeScores[itemId] = (allTimeScores[itemId] || 0) + (item.quantity || 1);
+
+            allTimeScores[itemId] =
+              (allTimeScores[itemId] || 0) + (item.quantity || 1);
           });
         });
 
@@ -1034,7 +999,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
 
       // Final fallback if still no winner
       if (!winningItemId) {
-        console.log("[RITUAL] No order history found - using default item");
         winningItemId = "fallback_velvet_latte";
       }
 
@@ -1046,7 +1010,7 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         // Use hardcoded fallback
         menuItemData = {
           name: "Velvet Latte",
-          price: 4.50,
+          price: 4.5,
           image_url: null,
           description: "Our signature smooth latte with velvety microfoam",
           category: "Drinks",
@@ -1061,10 +1025,9 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           .get();
 
         if (!itemSnapshot.exists) {
-          console.warn(`[RITUAL] Menu item ${winningItemId} not found, using fallback`);
           menuItemData = {
             name: "Classic Espresso",
-            price: 3.50,
+            price: 3.5,
             image_url: null,
             description: "Rich and bold espresso shot",
             category: "Drinks",
@@ -1105,16 +1068,15 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       } else {
         // Has orders in current time slot
         const messages = timeSlotMessages[currentTimeSlot];
-        contextualMessage = messages[Math.floor(Math.random() * messages.length)];
-        
+        contextualMessage =
+          messages[Math.floor(Math.random() * messages.length)];
+
         // Add personalization if they've ordered this item multiple times
         const winningItemScore = itemScores[winningItemId]?.orderCount || 0;
         if (winningItemScore > 2) {
           contextualMessage += ` (ordered ${winningItemScore} times)`;
         }
       }
-
-      console.log(`[RITUAL] Recommendation: ${menuItemData.name} - "${contextualMessage}"`);
 
       // Return the ritual recommendation
       res.json({
@@ -1128,9 +1090,12 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           customizations: menuItemData.customizations || [],
         },
         message: contextualMessage,
-        context: totalOrdersAllTime === 0 ? "new_user" : 
-                 totalOrdersInTimeSlot === 0 ? "all_time_favorite" : 
-                 "time_based",
+        context:
+          totalOrdersAllTime === 0
+            ? "new_user"
+            : totalOrdersInTimeSlot === 0
+              ? "all_time_favorite"
+              : "time_based",
         time_slot: currentTimeSlot,
         stats: {
           total_orders: totalOrdersAllTime,
@@ -1138,12 +1103,11 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           confidence_score: highestScore,
         },
       });
-
     } catch (error: any) {
       console.error("[RITUAL] Error generating ritual:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to generate ritual recommendation",
-        details: error.message 
+        details: error.message,
       });
     }
   });
@@ -1155,8 +1119,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
    */
   app.get("/api/admin/seed-ritual-orders", async (req, res) => {
     try {
-      console.log("[SEED-RITUAL] Starting order seeding process...");
-      
       const targetUserId = "baqV3tQlhnWczwTSUFsFsOs1w392";
       const batch = admin.firestore().batch();
       const ordersRef = admin.firestore().collection("orders");
@@ -1169,17 +1131,16 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       };
 
       // 1. Morning Ritual Orders (Americano - 8:00 AM)
-      console.log("[SEED-RITUAL] Creating 3 morning orders (8:00 AM)...");
       const morningItem = JSON.stringify([
-        { 
-          id: "americano_test", 
-          name: "Americano", 
-          price: 4.50, 
-          category: "Coffee", 
-          quantity: 1 
-        }
+        {
+          id: "americano_test",
+          name: "Americano",
+          price: 4.5,
+          category: "Coffee",
+          quantity: 1,
+        },
       ]);
-      
+
       for (let i = 0; i < 3; i++) {
         const docRef = ordersRef.doc();
         batch.set(docRef, {
@@ -1187,25 +1148,23 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           status: "completed",
           createdAt: getPastDate(8), // 8 AM
           items: morningItem,
-          total: 4.50,
+          total: 4.5,
           paymentMethod: "card",
-          createdAtTimestamp: admin.firestore.FieldValue.serverTimestamp()
+          createdAtTimestamp: admin.firestore.FieldValue.serverTimestamp(),
         });
-        console.log(`[SEED-RITUAL] Queued morning order ${i + 1}/3`);
       }
 
       // 2. Evening Ritual Orders (Trileçe - 9:00 PM / 21:00)
-      console.log("[SEED-RITUAL] Creating 4 evening orders (9:00 PM)...");
       const eveningItem = JSON.stringify([
-        { 
-          id: "trilece_test", 
-          name: "Trileçe (Turkish milk cake)", 
-          price: 12.21, 
-          category: "Dessert", 
-          quantity: 1 
-        }
+        {
+          id: "trilece_test",
+          name: "Trileçe (Turkish milk cake)",
+          price: 12.21,
+          category: "Dessert",
+          quantity: 1,
+        },
       ]);
-      
+
       for (let i = 0; i < 4; i++) {
         const docRef = ordersRef.doc();
         batch.set(docRef, {
@@ -1215,22 +1174,15 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           items: eveningItem,
           total: 12.21,
           paymentMethod: "card",
-          createdAtTimestamp: admin.firestore.FieldValue.serverTimestamp()
+          createdAtTimestamp: admin.firestore.FieldValue.serverTimestamp(),
         });
-        console.log(`[SEED-RITUAL] Queued evening order ${i + 1}/4`);
       }
 
       // Commit all writes
       await batch.commit();
-      
-      console.log("[SEED-RITUAL] Successfully seeded 7 test orders!");
-      console.log("[SEED-RITUAL] Expected behavior:");
-      console.log("  - At 8 AM → Recommend Americano (3 morning orders)");
-      console.log("  - At 9 PM → Recommend Trileçe (4 evening orders)");
-      console.log("  - Other times → Fallback to all-time favorite (Trileçe with 4 orders)");
 
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         message: "Successfully seeded 3 Morning and 4 Evening test orders!",
         details: {
           userId: targetUserId,
@@ -1240,15 +1192,15 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
           expectedBehavior: {
             morning: "Americano recommendation",
             evening: "Trileçe recommendation",
-            other: "Trileçe (all-time favorite)"
-          }
-        }
+            other: "Trileçe (all-time favorite)",
+          },
+        },
       });
     } catch (error: any) {
       console.error("[SEED-RITUAL] Error seeding orders:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to seed ritual orders",
-        details: error.message 
+        details: error.message,
       });
     }
   });
@@ -1259,8 +1211,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
    */
   app.get("/api/admin/insights", verifyAdminToken, async (req, res) => {
     try {
-      console.log("[INSIGHTS] Starting analytics pipeline...");
-
       // Step 1: Data Fetching & Aggregation from Firestore
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -1270,10 +1220,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         .collection("orders")
         .where("createdAt", ">=", thirtyDaysAgo.toISOString())
         .get();
-
-      console.log(
-        `[INSIGHTS] Fetched ${ordersSnapshot.size} orders from last 30 days`,
-      );
 
       if (ordersSnapshot.empty) {
         return res.status(200).json({
@@ -1347,12 +1293,6 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         hourly_distribution: hourlyOrders,
       };
 
-      console.log("[INSIGHTS] Data aggregation complete:", {
-        totalOrders: aggregatedData.total_orders,
-        totalRevenue: aggregatedData.total_revenue,
-        topItem: topItems[0]?.name,
-      });
-
       // Step 2: Send aggregated data to Groq LLM for analysis
       const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -1385,8 +1325,6 @@ Focus areas:
 
       const userMessage = `Here is the cafe's performance data for the last 30 days:\n\n${JSON.stringify(aggregatedData, null, 2)}`;
 
-      console.log("[INSIGHTS] Sending data to Groq API for analysis...");
-
       const completion = await groq.chat.completions.create({
         messages: [
           { role: "system", content: systemPrompt },
@@ -1403,8 +1341,6 @@ Focus areas:
       if (!aiResponse) {
         throw new Error("Groq API returned empty response");
       }
-
-      console.log("[INSIGHTS] Raw LLM response received, parsing JSON...");
 
       // Parse and validate JSON response
       let aiInsights;
@@ -1424,7 +1360,6 @@ Focus areas:
           "[INSIGHTS] Failed to parse LLM response:",
           parseError.message,
         );
-        console.error("[INSIGHTS] Raw response:", aiResponse.substring(0, 500));
 
         // Fallback response if LLM returns malformed JSON
         aiInsights = {
@@ -1442,8 +1377,6 @@ Focus areas:
           inventory_alerts: [],
         };
       }
-
-      console.log("[INSIGHTS] Successfully generated AI insights");
 
       res.status(200).json(aiInsights);
     } catch (error: any) {
