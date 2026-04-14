@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, ShoppingBag, ArrowRight, Plus, X, Check, Loader2 } from 'lucide-react';
+import { Sparkles, ShoppingBag, ArrowRight, Plus, X, Check, Loader2, Clock, TrendingUp } from 'lucide-react';
 import { MenuItem, CustomizationGroup, ChatMessage } from '../types';
 import { useCart } from '../CartContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -8,14 +8,52 @@ import { generateMoodRecommendation, chatWithAI } from '../lib/ai';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { getAuth } from 'firebase/auth';
+import { toast } from 'sonner';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
+interface RitualRecommendation {
+  item: {
+    id: string;
+    name: string;
+    price: number;
+    image_url: string | null;
+    description: string;
+    category: string;
+    customizations?: any[];
+  };
+  message: string;
+  context: 'new_user' | 'all_time_favorite' | 'time_based';
+  time_slot: 'morning' | 'lunch' | 'evening';
+  stats?: {
+    total_orders: number;
+    orders_in_time_slot: number;
+    confidence_score: number;
+  };
+}
 
 export function MenuScreen() {
   const { addItem, items, subtotal, getItemPrice } = useCart();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [customizations, setCustomizations] = useState<Record<string, string | string[]>>({});
-  const [filter, setFilter] = useState<'All' | 'Drinks' | 'Food' | 'Dessert'>('All');
+  const [filter, setFilter] = useState<string>('All');
   
+  // Map database categories to UI-friendly filter categories
+  const filterCategories = ['All', 'Drinks', 'Food', 'Dessert'];
+  
+  const filteredItems = menuItems.filter(item => {
+    if (filter === 'All') return true;
+    if (filter === 'Drinks') {
+      const categoryLower = item.category.toLowerCase();
+      return categoryLower.includes('coffee') || categoryLower.includes('drink') || categoryLower.includes('tea') || categoryLower.includes('beverage');
+    }
+    if (filter === 'Food') return item.category === 'Food';
+    if (filter === 'Dessert') return item.category === 'Dessert';
+    return item.category === filter;
+  });
+
   const [moodInput, setMoodInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     {
@@ -26,6 +64,10 @@ export function MenuScreen() {
     }
   ]);
   const [isThinking, setIsThinking] = useState(false);
+  
+  // Smart Ritual state
+  const [ritualData, setRitualData] = useState<RitualRecommendation | null>(null);
+  const [isLoadingRitual, setIsLoadingRitual] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, 'menu_items'), where('is_active', '==', true));
@@ -45,6 +87,48 @@ export function MenuScreen() {
     });
 
     return () => unsubscribe();
+  }, []);
+
+  // Fetch personalized ritual recommendations
+  useEffect(() => {
+    const fetchRitual = async () => {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        console.log('[RITUAL] No authenticated user, skipping ritual');
+        return;
+      }
+
+      setIsLoadingRitual(true);
+      try {
+        // Get fresh token
+        const token = await user.getIdToken(true);
+        
+        const response = await fetch(`${API_BASE_URL}/api/customer/ritual`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        setRitualData(data);
+        console.log('[RITUAL] Loaded:', data.message);
+      } catch (error: any) {
+        console.error('[RITUAL] Error fetching ritual:', error);
+        // Don't show toast for ritual errors - it's a nice-to-have feature
+      } finally {
+        setIsLoadingRitual(false);
+      }
+    };
+
+    fetchRitual();
   }, []);
 
   const handleConciergeSubmit = async () => {
@@ -94,8 +178,6 @@ export function MenuScreen() {
     }
   };
 
-  const filteredItems = menuItems.filter(item => filter === 'All' || item.category === filter);
-
   const openCustomization = (item: MenuItem) => {
     setSelectedItem(item);
     // Initialize defaults for single choice groups
@@ -134,47 +216,153 @@ export function MenuScreen() {
 
   return (
     <div className="max-w-screen-xl mx-auto px-6 py-8 md:py-12">
-      {/* Hero Section */}
+      {/* Hero Section - Smart Ritual */}
       <section className="mb-16">
-        <div className="relative overflow-hidden rounded-xl bg-primary-container text-white p-8 md:p-12 flex flex-col md:flex-row items-center justify-between gap-8 group">
-          <div className="absolute inset-0 opacity-20 mix-blend-overlay">
-            <img 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBrgg1QR8kF315100oXt5XN-RgEHc7e9IXx1cLbkKnd5aLT9n1p36cMnyjICP6JGLxoyOpyaHNmUm6n9HbyL1Sn4zHpJNObYfXhY3KkwSeR4fknsVUxrDZxlOzKIWgvlHwXQMGMJ96KIW4HR-ArD3Ag3_w4sZinls4tBNNYE8CIAB5xroLhtrkffV7uXfZW9TfuRZrl-H2xXLS_F0J45b25SCQqwhuDTH-NdtdDpvdJDw622VyGs-BVVnw3EorlfgVf5HYNaA7n7Po" 
-              alt="Espresso background"
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-          <div className="relative z-10 max-w-xl">
-            <span className="inline-block text-[0.75rem] font-label tracking-[0.15rem] uppercase mb-4 opacity-80">Morning Ritual</span>
-            <h1 className="text-3xl md:text-5xl font-headline mb-6 leading-tight">It's Tuesday morning. <br/>Your usual <span className="italic text-secondary-container">Espresso?</span></h1>
-            <div className="flex gap-4">
-              <button 
-                onClick={() => menuItems.length > 0 && openCustomization(menuItems[0])}
-                className="bg-secondary text-on-secondary px-8 py-3.5 rounded-xl font-semibold flex items-center gap-2 hover:scale-[0.98] transition-transform shadow-xl shadow-primary/20"
-              >
-                Add to Cart
-                <ShoppingBag size={14} />
-              </button>
-              <button 
-                onClick={() => menuItems.length > 0 && openCustomization(menuItems[0])}
-                className="bg-white/10 backdrop-blur-md border border-white/20 px-8 py-3.5 rounded-xl font-semibold hover:bg-white/20 transition-all"
-              >
-                Customize
-              </button>
+        {isLoadingRitual ? (
+          // Loading skeleton
+          <div className="relative overflow-hidden rounded-xl bg-primary-container text-white p-8 md:p-12 flex items-center justify-center min-h-[300px]">
+            <div className="text-center">
+              <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4" />
+              <p className="text-lg font-headline">Curating your ritual...</p>
             </div>
           </div>
-          <div className="relative z-10 hidden lg:block w-64 h-64 -mr-8 translate-y-4 rotate-3 group-hover:rotate-0 transition-transform duration-700">
-            <div className="w-full h-full rounded-xl overflow-hidden shadow-2xl border-4 border-white/10">
+        ) : ritualData ? (
+          // Personalized ritual widget
+          <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary-container to-secondary-container text-white p-8 md:p-12 flex flex-col md:flex-row items-center justify-between gap-8 group">
+            <div className="absolute inset-0 opacity-20 mix-blend-overlay">
               <img 
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuDc_W8XhSzooqz6NMcV8BCzhCCdmD0FHRGU6iZZHgfyyQUXY9sTQTuL8nGJbYKHui2WZh38iGtZlr8L8KdqEDlA85_6ffX2YqxdWIx9Vo4lz_wC9QFVkDOXqOMAb_Rg25XWo7OMZ1sbHyCY6jufIRL6fSPuQBhTOe2o2SgjZLqtXasEy3PKhChfI9xInGYsbx11jjZx8uPxfE3DzCVPrvErL5b4bMmNaET8SenhVm7ksu9xP3gI7o4ffh0IIwhyRLkmG2iugrYHvu4" 
-                alt="Espresso"
+                src={ritualData.item.image_url || "https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=800"} 
+                alt="Ritual background"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
             </div>
+            <div className="relative z-10 max-w-xl">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock size={16} className="text-secondary-container" />
+                <span className="inline-block text-[0.75rem] font-label tracking-[0.15rem] uppercase opacity-80">
+                  {ritualData.time_slot === 'morning' ? 'Morning Ritual' : 
+                   ritualData.time_slot === 'lunch' ? 'Lunch Ritual' : 'Evening Ritual'}
+                </span>
+              </div>
+              <h1 className="text-2xl md:text-4xl font-headline mb-4 leading-tight">
+                {ritualData.message}
+              </h1>
+              
+              {/* Primary Recommendation Card */}
+              <div className="bg-white/10 backdrop-blur-md rounded-xl p-6 mb-6 border border-white/20 hover:bg-white/15 transition-all">
+                <div className="flex items-start gap-4">
+                  {ritualData.item.image_url && (
+                    <div className="w-20 h-20 rounded-lg overflow-hidden shrink-0 shadow-lg">
+                      <img 
+                        src={ritualData.item.image_url}
+                        alt={ritualData.item.name}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-xl font-headline italic mb-2">{ritualData.item.name}</h3>
+                      <span className="text-lg font-bold text-secondary-container">${ritualData.item.price.toFixed(2)}</span>
+                    </div>
+                    <p className="text-sm opacity-90 mb-3 line-clamp-2">{ritualData.item.description}</p>
+                    
+                    {/* Stats badge for context */}
+                    {ritualData.stats && ritualData.stats.orders_in_time_slot > 0 && (
+                      <div className="flex items-center gap-2 mb-3">
+                        <TrendingUp size={14} className="text-secondary-container" />
+                        <span className="text-xs opacity-80">
+                          Ordered {ritualData.stats.orders_in_time_slot} time{ritualData.stats.orders_in_time_slot !== 1 ? 's' : ''} at this time
+                        </span>
+                      </div>
+                    )}
+                    
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => {
+                          // Find the full menu item with customizations
+                          const fullItem = menuItems.find(m => m.id === ritualData.item.id);
+                          if (fullItem) {
+                            openCustomization(fullItem);
+                          } else {
+                            // Fallback: create minimal item and add directly
+                            const minimalItem: MenuItem = {
+                              id: ritualData.item.id,
+                              name: ritualData.item.name,
+                              price: ritualData.item.price,
+                              image: ritualData.item.image_url || '',
+                              description: ritualData.item.description,
+                              category: ritualData.item.category,
+                              customizations: ritualData.item.customizations || [],
+                              is_active: true,
+                            };
+                            addItem(minimalItem, {});
+                            toast.success(`Added ${ritualData.item.name} to cart!`);
+                          }
+                        }}
+                        className="bg-secondary-container text-on-secondary-container px-6 py-2.5 rounded-lg font-semibold flex items-center gap-2 hover:scale-[1.02] active:scale-95 transition-transform shadow-lg"
+                      >
+                        <ShoppingBag size={16} />
+                        Order Now
+                      </button>
+                      {menuItems.find(m => m.id === ritualData.item.id) && (
+                        <button 
+                          onClick={() => {
+                            const fullItem = menuItems.find(m => m.id === ritualData.item.id);
+                            if (fullItem) openCustomization(fullItem);
+                          }}
+                          className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-2.5 rounded-lg font-semibold hover:bg-white/20 transition-all"
+                        >
+                          Customize
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Context indicator */}
+              <div className="flex items-center gap-2 text-xs opacity-70">
+                <Sparkles size={14} />
+                <span>
+                  {ritualData.context === 'new_user' ? 'Based on popular choices' :
+                   ritualData.context === 'all_time_favorite' ? 'Your all-time favorite' :
+                   'Personalized for this time of day'}
+                </span>
+              </div>
+            </div>
+            
+            {/* Decorative element */}
+            <div className="relative z-10 hidden lg:block w-64 h-64 -mr-8 translate-y-4 rotate-3 group-hover:rotate-0 transition-transform duration-700">
+              <div className="w-full h-full rounded-xl overflow-hidden shadow-2xl border-4 border-white/10">
+                <img 
+                  src={ritualData.item.image_url || "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400"}
+                  alt={ritualData.item.name}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          // Unauthenticated fallback
+          <div className="relative overflow-hidden rounded-xl bg-stone-100 border-2 border-dashed border-stone-300 text-stone-500 p-8 md:p-12 flex items-center justify-center min-h-[300px]">
+            <div className="text-center">
+              <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <h2 className="text-2xl font-headline mb-2">Sign in to see your Ritual</h2>
+              <p className="text-sm mb-4">Get personalized recommendations based on your order history</p>
+              <Link 
+                to="/login" 
+                className="inline-flex items-center gap-2 bg-primary text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-primary-dark transition-colors"
+              >
+                Sign In
+                <ArrowRight size={16} />
+              </Link>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Concierge Section */}
@@ -318,10 +506,10 @@ export function MenuScreen() {
             <h2 className="text-4xl font-headline text-primary">Explore the Menu</h2>
           </div>
           <div className="flex flex-wrap gap-2 sm:gap-4">
-            {['All', 'Drinks', 'Food', 'Dessert'].map(f => (
+            {filterCategories.map(f => (
               <button 
                 key={f}
-                onClick={() => setFilter(f as any)}
+                onClick={() => setFilter(f)}
                 className={`px-6 py-2 rounded-full font-label text-[0.7rem] uppercase tracking-widest font-bold transition-colors ${
                   filter === f 
                     ? 'bg-surface-container-highest text-primary' 

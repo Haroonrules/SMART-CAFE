@@ -98,15 +98,23 @@ export function AdminStaffScreen() {
     }
 
     try {
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const token = await user.getIdToken?.();
+      // Use Firebase auth.currentUser directly with guaranteed fresh token
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        toast.error('User context lost. Please refresh.');
+        return;
+      }
+
+      // Force token refresh to ensure we have a valid, non-expired token
+      const token = await currentUser.getIdToken(true);
       
       if (!token) {
         toast.error('Authentication required');
         return;
       }
 
-      const response = await fetch(`/api/staff/${member.uid}`, {
+      const response = await fetch(`/api/admin/staff/${member.id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -119,6 +127,8 @@ export function AdminStaffScreen() {
       }
 
       toast.success('Staff member removed successfully');
+      // Update state manually instead of reloading the page
+      setStaff(prev => prev.filter(s => s.id !== member.id));
     } catch (error: any) {
       console.error('Remove staff error:', error);
       toast.error(error.message || 'Failed to remove staff member');

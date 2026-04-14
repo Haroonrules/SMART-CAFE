@@ -50,6 +50,19 @@ export interface Order {
   date?: string;
 }
 
+export interface AIInsightRecommendation {
+  priority: "high" | "medium" | "low";
+  title: string;
+  description: string;
+}
+
+export interface AIInsights {
+  peak_hours_analysis: string;
+  revenue_prediction: string;
+  recommendations: AIInsightRecommendation[];
+  inventory_alerts: string[];
+}
+
 export interface UserProfile {
   id?: string;
   name: string;

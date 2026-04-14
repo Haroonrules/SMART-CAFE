@@ -512,12 +512,12 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
   app.post("/api/auth/sync-staff", async (req, res) => {
     try {
       const authHeader = req.headers.authorization;
-      
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
         return res.status(401).json({ error: "Authorization token required" });
       }
 
-      const token = authHeader.split('Bearer ')[1];
+      const token = authHeader.split("Bearer ")[1];
 
       // Verify the Google Auth JWT token
       const decodedToken = await admin.auth().verifyIdToken(token);
@@ -531,16 +531,18 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       console.log(`[SYNC-STAFF] Syncing user: ${userEmail} (UID: ${uid})`);
 
       // Query staff collection for this email
-      const staffSnapshot = await admin.firestore()
+      const staffSnapshot = await admin
+        .firestore()
         .collection("staff")
         .where("email", "==", userEmail)
         .get();
 
       if (staffSnapshot.empty) {
         console.log(`[SYNC-STAFF] No staff record found for ${userEmail}`);
-        return res.status(404).json({ 
-          error: "No staff record found. Contact admin to be added to the whitelist.",
-          isStaff: false 
+        return res.status(404).json({
+          error:
+            "No staff record found. Contact admin to be added to the whitelist.",
+          isStaff: false,
         });
       }
 
@@ -552,11 +554,15 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       console.log(`[SYNC-STAFF] Found staff record: ${systemRole} role`);
 
       // Update the staff document with the actual UID from Google Auth
-      await admin.firestore().collection("staff").doc(staffDoc.id).update({
-        uid: uid,
-        photo_url: decodedToken.picture || "",
-        updated_at: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      await admin
+        .firestore()
+        .collection("staff")
+        .doc(staffDoc.id)
+        .update({
+          uid: uid,
+          photo_url: decodedToken.picture || "",
+          updated_at: admin.firestore.FieldValue.serverTimestamp(),
+        });
 
       // Assign Custom Claims for RBAC
       await admin.auth().setCustomUserClaims(uid, {
@@ -564,7 +570,9 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
         staff: true, // Generic staff claim for basic access
       });
 
-      console.log(`[SYNC-STAFF] Successfully synced ${userEmail} with ${systemRole} role and custom claims`);
+      console.log(
+        `[SYNC-STAFF] Successfully synced ${userEmail} with ${systemRole} role and custom claims`,
+      );
 
       res.json({
         success: true,
@@ -576,7 +584,7 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
     } catch (error: any) {
       console.error("[SYNC-STAFF] Error:", error);
 
-      if (error.code === 'auth/invalid-id-token') {
+      if (error.code === "auth/invalid-id-token") {
         return res.status(401).json({ error: "Invalid authentication token" });
       }
 
@@ -603,14 +611,15 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       }
 
       // Validate system_role
-      if (!['admin', 'kitchen'].includes(system_role)) {
+      if (!["admin", "kitchen"].includes(system_role)) {
         return res.status(400).json({
           error: "system_role must be either 'admin' or 'kitchen'",
         });
       }
 
       // Check if staff member already exists
-      const existingStaff = await admin.firestore()
+      const existingStaff = await admin
+        .firestore()
         .collection("staff")
         .where("email", "==", email.toLowerCase())
         .get();
@@ -636,7 +645,8 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
       res.status(201).json({
         success: true,
         id: staffRef.id,
-        message: "Staff member added to whitelist. They must sign in with Google to activate their account.",
+        message:
+          "Staff member added to whitelist. They must sign in with Google to activate their account.",
       });
     } catch (error: any) {
       console.error("Error adding staff to whitelist:", error);
@@ -739,22 +749,724 @@ Menu items data: ${JSON.stringify(menuItems.map((i) => ({ name: i.name, category
   /**
    * Endpoint to remove staff member
    */
-  app.delete("/api/admin/staff/:uid", verifyAdminToken, async (req, res) => {
+  app.delete("/api/admin/staff/:docId", verifyAdminToken, async (req, res) => {
     try {
-      const { uid } = req.params;
+      const { docId } = req.params;
 
-      // Delete from Firestore
-      await admin.firestore().collection("users").doc(uid).delete();
+      console.log(`[DELETE-STAFF] Attempting to delete staff document: ${docId}`);
 
-      // Optionally disable the user in Firebase Auth
-      await admin.auth().updateUser(uid, { disabled: true });
+      // Exact document lookup by Firestore Document ID
+      const staffRef = admin.firestore().collection("staff").doc(docId);
+      const doc = await staffRef.get();
 
-      res.json({ success: true });
+      if (!doc.exists) {
+        console.log(`[DELETE-STAFF] No staff document found with ID: ${docId}`);
+        return res.status(404).json({ error: "Staff member not found" });
+      }
+
+      const staffData = doc.data();
+      const uid = staffData?.uid;
+
+      // Try to disable the Firebase Auth user if uid exists
+      if (uid) {
+        try {
+          await admin.auth().updateUser(uid, { disabled: true });
+          console.log(`[DELETE-STAFF] Disabled Firebase Auth user: ${uid}`);
+        } catch (authError: any) {
+          // User might not exist in Auth yet (whitelist-only), that's okay
+          console.warn(`[DELETE-STAFF] Could not disable Auth user (may not exist): ${authError.message}`);
+        }
+      }
+
+      // Unconditionally delete the Firestore document
+      await staffRef.delete();
+      console.log(`[DELETE-STAFF] Deleted staff document: ${docId}`);
+
+      res.json({ 
+        success: true,
+        message: "Staff member removed successfully"
+      });
     } catch (error: any) {
-      console.error("Error removing staff:", error);
+      console.error("[DELETE-STAFF] Error removing staff:", error);
       res
         .status(500)
         .json({ error: "Failed to remove staff", details: error.message });
+    }
+  });
+
+  /**
+   * GET /api/customer/ritual - Context-Aware Ritual Engine
+   * Returns personalized item recommendations based on time-of-day and user's order history
+   * Uses fast algorithm (no LLM) for millisecond response times
+   */
+  app.get("/api/customer/ritual", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res
+          .status(401)
+          .json({ error: "Missing or invalid authorization header" });
+      }
+
+      const token = authHeader.split(" ")[1];
+
+      // Verify the customer's Firebase ID token
+      let decodedToken;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(token);
+      } catch (tokenError: any) {
+        console.error("[RITUAL] Token verification failed:", tokenError.message);
+        return res.status(401).json({ error: "Invalid or expired token" });
+      }
+
+      const userId = decodedToken.uid;
+      console.log(`[RITUAL] Generating ritual for user: ${userId}`);
+
+      // Get current local hour (0-23)
+      const now = new Date();
+      const currentHour = now.getHours();
+      
+      // Define time slots
+      let currentTimeSlot: 'morning' | 'lunch' | 'evening';
+      if (currentHour >= 5 && currentHour < 11) {
+        currentTimeSlot = 'morning';
+      } else if (currentHour >= 11 && currentHour < 16) {
+        currentTimeSlot = 'lunch';
+      } else {
+        currentTimeSlot = 'evening';
+      }
+
+      console.log(`[RITUAL] Current time slot: ${currentTimeSlot} (${currentHour}:00)`);
+
+      // Query user's past completed orders
+      const ordersSnapshot = await admin
+        .firestore()
+        .collection("orders")
+        .where("userId", "==", userId)
+        .where("status", "==", "completed")
+        .get();
+
+      console.log(`[RITUAL] Found ${ordersSnapshot.size} completed orders`);
+
+      // If no orders at all, return fallback recommendation
+      if (ordersSnapshot.empty) {
+        console.log("[RITUAL] New user - returning default popular item");
+        
+        // Fetch a hardcoded popular item from menu_items
+        const popularItemSnapshot = await admin
+          .firestore()
+          .collection("menu_items")
+          .where("name", "==", "Velvet Latte")
+          .limit(1)
+          .get();
+
+        let fallbackItem;
+        if (!popularItemSnapshot.empty) {
+          const itemData = popularItemSnapshot.docs[0].data();
+          fallbackItem = {
+            id: popularItemSnapshot.docs[0].id,
+            name: itemData.name,
+            price: itemData.price,
+            image_url: itemData.image_url,
+            description: itemData.description,
+            category: itemData.category,
+          };
+        } else {
+          // Absolute fallback if Velvet Latte doesn't exist
+          fallbackItem = {
+            id: "fallback",
+            name: "Velvet Latte",
+            price: 4.50,
+            image_url: null,
+            description: "Our signature smooth latte",
+            category: "Drinks",
+          };
+        }
+
+        return res.json({
+          item: fallbackItem,
+          message: "Welcome! Try our most popular choice.",
+          context: "new_user",
+          time_slot: currentTimeSlot,
+        });
+      }
+
+      // Iterate through orders and score items by time slot
+      const itemScores: Record<string, { 
+        itemId: string; 
+        name: string; 
+        score: number; 
+        orderCount: number;
+        lastOrdered?: any;
+      }> = {};
+
+      let totalOrdersInTimeSlot = 0;
+      let totalOrdersAllTime = 0;
+
+      ordersSnapshot.forEach((doc) => {
+        const order = doc.data();
+        totalOrdersAllTime++;
+
+        // Parse order timestamp to determine its time slot (handle both createdAt and created_at)
+        const timestamp = order.createdAt || order.created_at;
+        let orderHour: number;
+        if (timestamp?.toDate) {
+          // Firestore Timestamp
+          orderHour = timestamp.toDate().getHours();
+        } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+          // ISO string or Unix timestamp
+          orderHour = new Date(timestamp).getHours();
+        } else {
+          // Skip if no valid time
+          return;
+        }
+
+        // Determine which time slot this order belongs to
+        let orderTimeSlot: 'morning' | 'lunch' | 'evening';
+        if (orderHour >= 5 && orderHour < 11) {
+          orderTimeSlot = 'morning';
+        } else if (orderHour >= 11 && orderHour < 16) {
+          orderTimeSlot = 'lunch';
+        } else {
+          orderTimeSlot = 'evening';
+        }
+
+        // Only count items from orders in the CURRENT time slot
+        const isMatchingTimeSlot = orderTimeSlot === currentTimeSlot;
+        
+        if (isMatchingTimeSlot) {
+          totalOrdersInTimeSlot++;
+        }
+
+        // Process items in this order (handle both array and stringified JSON)
+        let items: any[] = [];
+        if (typeof order.items === 'string') {
+          try { 
+            items = JSON.parse(order.items); 
+          } catch (e) { 
+            console.warn('[RITUAL] Failed to parse items string:', e);
+            items = []; 
+          }
+        } else if (Array.isArray(order.items)) {
+          items = order.items;
+        }
+
+        items.forEach((item: any) => {
+          const itemName = item.name || "Unknown Item";
+          const itemId = item.item_id || item.id;
+
+          if (!itemId) return; // Skip items without ID
+
+          if (!itemScores[itemId]) {
+            itemScores[itemId] = {
+              itemId,
+              name: itemName,
+              score: 0,
+              orderCount: 0,
+              lastOrdered: order.created_at,
+            };
+          }
+
+          // Increment score only if order matches current time slot
+          if (isMatchingTimeSlot) {
+            itemScores[itemId].score += item.quantity || 1;
+            itemScores[itemId].orderCount++;
+            
+            // Update last ordered timestamp if this is more recent
+            if (order.created_at) {
+              const existingDate = itemScores[itemId].lastOrdered?.toDate 
+                ? itemScores[itemId].lastOrdered.toDate()
+                : new Date(itemScores[itemId].lastOrdered);
+              const newDate = order.created_at.toDate 
+                ? order.created_at.toDate()
+                : new Date(order.created_at);
+              
+              if (newDate > existingDate) {
+                itemScores[itemId].lastOrdered = order.created_at;
+              }
+            }
+          }
+        });
+      });
+
+      console.log(`[RITUAL] Time-slot analysis: ${totalOrdersInTimeSlot}/${totalOrdersAllTime} orders match ${currentTimeSlot}`);
+
+      // Find the winning item
+      let winningItemId: string | null = null;
+      let highestScore = 0;
+
+      // First, try to find best item in current time slot
+      Object.entries(itemScores).forEach(([itemId, data]) => {
+        if (data.score > highestScore) {
+          highestScore = data.score;
+          winningItemId = itemId;
+        }
+      });
+
+      // Fallback: If no orders in current time slot, use all-time favorite
+      if (!winningItemId || highestScore === 0) {
+        console.log("[RITUAL] No orders in current time slot - falling back to all-time favorite");
+        
+        // Re-scan all orders without time filter
+        const allTimeScores: Record<string, number> = {};
+        
+        ordersSnapshot.forEach((doc) => {
+          const order = doc.data();
+          const items = Array.isArray(order.items) ? order.items : [];
+          
+          items.forEach((item: any) => {
+            const itemId = item.item_id || item.id;
+            if (!itemId) return;
+            
+            allTimeScores[itemId] = (allTimeScores[itemId] || 0) + (item.quantity || 1);
+          });
+        });
+
+        // Find highest scoring all-time item
+        Object.entries(allTimeScores).forEach(([itemId, score]) => {
+          if (score > highestScore) {
+            highestScore = score;
+            winningItemId = itemId;
+          }
+        });
+      }
+
+      // Final fallback if still no winner
+      if (!winningItemId) {
+        console.log("[RITUAL] No order history found - using default item");
+        winningItemId = "fallback_velvet_latte";
+      }
+
+      // Fetch full menu_item details for the winning item
+      let menuItemData: any;
+      let menuItemDocId: string;
+
+      if (winningItemId === "fallback_velvet_latte") {
+        // Use hardcoded fallback
+        menuItemData = {
+          name: "Velvet Latte",
+          price: 4.50,
+          image_url: null,
+          description: "Our signature smooth latte with velvety microfoam",
+          category: "Drinks",
+        };
+        menuItemDocId = "fallback";
+      } else {
+        // Query Firestore for the actual menu item
+        const itemSnapshot = await admin
+          .firestore()
+          .collection("menu_items")
+          .doc(winningItemId)
+          .get();
+
+        if (!itemSnapshot.exists) {
+          console.warn(`[RITUAL] Menu item ${winningItemId} not found, using fallback`);
+          menuItemData = {
+            name: "Classic Espresso",
+            price: 3.50,
+            image_url: null,
+            description: "Rich and bold espresso shot",
+            category: "Drinks",
+          };
+          menuItemDocId = "fallback_espresso";
+        } else {
+          menuItemData = itemSnapshot.data();
+          menuItemDocId = itemSnapshot.id;
+        }
+      }
+
+      // Generate contextual message based on context
+      let contextualMessage: string;
+      const timeSlotMessages = {
+        morning: [
+          "Your usual morning pick-me-up ☕",
+          "Start your day right with this classic",
+          "Morning fuel, just how you like it",
+        ],
+        lunch: [
+          "Perfect for your afternoon break",
+          "Your midday favorite awaits",
+          "Lunchtime ritual, customized for you",
+        ],
+        evening: [
+          "Wind down with your evening choice",
+          "Your perfect end-of-day treat",
+          "Evening relaxation, your way",
+        ],
+      };
+
+      if (totalOrdersInTimeSlot === 0 && totalOrdersAllTime > 0) {
+        // Used all-time fallback
+        contextualMessage = `Your all-time favorite, perfect for any time of day`;
+      } else if (totalOrdersAllTime === 0) {
+        // New user
+        contextualMessage = "Welcome! Try our most popular choice.";
+      } else {
+        // Has orders in current time slot
+        const messages = timeSlotMessages[currentTimeSlot];
+        contextualMessage = messages[Math.floor(Math.random() * messages.length)];
+        
+        // Add personalization if they've ordered this item multiple times
+        const winningItemScore = itemScores[winningItemId]?.orderCount || 0;
+        if (winningItemScore > 2) {
+          contextualMessage += ` (ordered ${winningItemScore} times)`;
+        }
+      }
+
+      console.log(`[RITUAL] Recommendation: ${menuItemData.name} - "${contextualMessage}"`);
+
+      // Return the ritual recommendation
+      res.json({
+        item: {
+          id: menuItemDocId,
+          name: menuItemData.name,
+          price: menuItemData.price,
+          image_url: menuItemData.image_url,
+          description: menuItemData.description,
+          category: menuItemData.category,
+          customizations: menuItemData.customizations || [],
+        },
+        message: contextualMessage,
+        context: totalOrdersAllTime === 0 ? "new_user" : 
+                 totalOrdersInTimeSlot === 0 ? "all_time_favorite" : 
+                 "time_based",
+        time_slot: currentTimeSlot,
+        stats: {
+          total_orders: totalOrdersAllTime,
+          orders_in_time_slot: totalOrdersInTimeSlot,
+          confidence_score: highestScore,
+        },
+      });
+
+    } catch (error: any) {
+      console.error("[RITUAL] Error generating ritual:", error);
+      res.status(500).json({ 
+        error: "Failed to generate ritual recommendation",
+        details: error.message 
+      });
+    }
+  });
+
+  /**
+   * GET /api/admin/seed-ritual-orders - Test Order Seeder
+   * Injects historical orders for testing the time-weighted ritual algorithm
+   * Target user: baqV3tQlhnWczwTSUFsFsOs1w392
+   */
+  app.get("/api/admin/seed-ritual-orders", async (req, res) => {
+    try {
+      console.log("[SEED-RITUAL] Starting order seeding process...");
+      
+      const targetUserId = "baqV3tQlhnWczwTSUFsFsOs1w392";
+      const batch = admin.firestore().batch();
+      const ordersRef = admin.firestore().collection("orders");
+
+      // Helper to create an ISO string for a specific hour today
+      const getPastDate = (hour: number) => {
+        const d = new Date();
+        d.setHours(hour, 0, 0, 0);
+        return d.toISOString();
+      };
+
+      // 1. Morning Ritual Orders (Americano - 8:00 AM)
+      console.log("[SEED-RITUAL] Creating 3 morning orders (8:00 AM)...");
+      const morningItem = JSON.stringify([
+        { 
+          id: "americano_test", 
+          name: "Americano", 
+          price: 4.50, 
+          category: "Coffee", 
+          quantity: 1 
+        }
+      ]);
+      
+      for (let i = 0; i < 3; i++) {
+        const docRef = ordersRef.doc();
+        batch.set(docRef, {
+          userId: targetUserId,
+          status: "completed",
+          createdAt: getPastDate(8), // 8 AM
+          items: morningItem,
+          total: 4.50,
+          paymentMethod: "card",
+          createdAtTimestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`[SEED-RITUAL] Queued morning order ${i + 1}/3`);
+      }
+
+      // 2. Evening Ritual Orders (Trileçe - 9:00 PM / 21:00)
+      console.log("[SEED-RITUAL] Creating 4 evening orders (9:00 PM)...");
+      const eveningItem = JSON.stringify([
+        { 
+          id: "trilece_test", 
+          name: "Trileçe (Turkish milk cake)", 
+          price: 12.21, 
+          category: "Dessert", 
+          quantity: 1 
+        }
+      ]);
+      
+      for (let i = 0; i < 4; i++) {
+        const docRef = ordersRef.doc();
+        batch.set(docRef, {
+          userId: targetUserId,
+          status: "completed",
+          createdAt: getPastDate(21), // 9 PM
+          items: eveningItem,
+          total: 12.21,
+          paymentMethod: "card",
+          createdAtTimestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`[SEED-RITUAL] Queued evening order ${i + 1}/4`);
+      }
+
+      // Commit all writes
+      await batch.commit();
+      
+      console.log("[SEED-RITUAL] Successfully seeded 7 test orders!");
+      console.log("[SEED-RITUAL] Expected behavior:");
+      console.log("  - At 8 AM → Recommend Americano (3 morning orders)");
+      console.log("  - At 9 PM → Recommend Trileçe (4 evening orders)");
+      console.log("  - Other times → Fallback to all-time favorite (Trileçe with 4 orders)");
+
+      res.json({ 
+        success: true, 
+        message: "Successfully seeded 3 Morning and 4 Evening test orders!",
+        details: {
+          userId: targetUserId,
+          morningOrders: 3,
+          eveningOrders: 4,
+          totalOrders: 7,
+          expectedBehavior: {
+            morning: "Americano recommendation",
+            evening: "Trileçe recommendation",
+            other: "Trileçe (all-time favorite)"
+          }
+        }
+      });
+    } catch (error: any) {
+      console.error("[SEED-RITUAL] Error seeding orders:", error);
+      res.status(500).json({ 
+        error: "Failed to seed ritual orders",
+        details: error.message 
+      });
+    }
+  });
+
+  /**
+   * Endpoint to generate AI-powered business insights (Admin Only)
+   * Aggregates order data and uses Groq LLM for analysis
+   */
+  app.get("/api/admin/insights", verifyAdminToken, async (req, res) => {
+    try {
+      console.log("[INSIGHTS] Starting analytics pipeline...");
+
+      // Step 1: Data Fetching & Aggregation from Firestore
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const ordersSnapshot = await admin
+        .firestore()
+        .collection("orders")
+        .where("createdAt", ">=", thirtyDaysAgo.toISOString())
+        .get();
+
+      console.log(
+        `[INSIGHTS] Fetched ${ordersSnapshot.size} orders from last 30 days`,
+      );
+
+      if (ordersSnapshot.empty) {
+        return res.status(200).json({
+          peak_hours_analysis:
+            "Insufficient data for analysis. Need more orders.",
+          revenue_prediction: "Not enough historical data to make predictions.",
+          recommendations: [
+            {
+              priority: "high",
+              title: "Start Collecting Data",
+              description:
+                "Your cafe needs more order history to generate meaningful insights.",
+            },
+          ],
+          inventory_alerts: [],
+        });
+      }
+
+      // Aggregate raw data into summary statistics
+      let totalRevenue = 0;
+      const itemCounts: Record<string, { name: string; quantity: number }> = {};
+      const hourlyOrders: Record<string, number> = {};
+
+      ordersSnapshot.forEach((doc) => {
+        const order = doc.data();
+
+        // Revenue aggregation
+        totalRevenue += order.total || 0;
+
+        // Item frequency analysis
+        const items = Array.isArray(order.items) ? order.items : [];
+        items.forEach((item: any) => {
+          const itemName = item.name || "Unknown Item";
+          const quantity = item.quantity || 1;
+
+          if (!itemCounts[itemName]) {
+            itemCounts[itemName] = { name: itemName, quantity: 0 };
+          }
+          itemCounts[itemName].quantity += quantity;
+        });
+
+        // Hourly distribution analysis
+        if (order.createdAt) {
+          const orderDate = new Date(order.createdAt);
+          const hour = orderDate.getHours().toString().padStart(2, "0") + ":00";
+          hourlyOrders[hour] = (hourlyOrders[hour] || 0) + 1;
+        }
+      });
+
+      // Sort items by quantity to get top 5
+      const topItems = Object.values(itemCounts)
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, 5);
+
+      // Find peak hours (top 3 busiest hours)
+      const sortedHours = Object.entries(hourlyOrders)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3);
+
+      const aggregatedData = {
+        period: "Last 30 days",
+        total_orders: ordersSnapshot.size,
+        total_revenue: Math.round(totalRevenue * 100) / 100,
+        average_order_value:
+          Math.round((totalRevenue / ordersSnapshot.size) * 100) / 100,
+        top_selling_items: topItems,
+        peak_hours: sortedHours.map(([hour, count]) => ({
+          hour,
+          orders: count,
+        })),
+        hourly_distribution: hourlyOrders,
+      };
+
+      console.log("[INSIGHTS] Data aggregation complete:", {
+        totalOrders: aggregatedData.total_orders,
+        totalRevenue: aggregatedData.total_revenue,
+        topItem: topItems[0]?.name,
+      });
+
+      // Step 2: Send aggregated data to Groq LLM for analysis
+      const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+      const systemPrompt = `You are an expert Cafe Business Consultant with deep knowledge of hospitality analytics. 
+Analyze the provided 30-day performance data and provide actionable, specific insights.
+
+CRITICAL RULES:
+1. You MUST respond in strictly valid JSON format matching the schema below.
+2. Do NOT invent or hallucinate data. ONLY use the numbers provided in the input data.
+3. If data is insufficient for certain insights, state that clearly.
+4. Provide SPECIFIC, ACTIONABLE recommendations based on the actual data patterns.
+5. Do NOT include markdown code blocks, backticks, or any formatting - just raw JSON.
+6. Keep responses concise but insightful.
+
+Response Schema:
+{
+  "peak_hours_analysis": "string explaining busiest times with specific data points",
+  "revenue_prediction": "string predicting next week's trends based on current patterns",
+  "recommendations": [
+    { "priority": "high|medium|low", "title": "string", "description": "string" }
+  ],
+  "inventory_alerts": ["string"]
+}
+
+Focus areas:
+- Peak hours: Identify clear patterns and suggest staffing optimizations
+- Revenue: Analyze trends and predict realistic outcomes
+- Recommendations: Must be specific to THIS cafe's data (e.g., "Promote ${topItems[0]?.name}" not generic advice)
+- Inventory: Flag items that might need restocking based on sales velocity`;
+
+      const userMessage = `Here is the cafe's performance data for the last 30 days:\n\n${JSON.stringify(aggregatedData, null, 2)}`;
+
+      console.log("[INSIGHTS] Sending data to Groq API for analysis...");
+
+      const completion = await groq.chat.completions.create({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        model: "llama-3.1-8b-instant",
+        temperature: 0.3, // Low temperature for consistent, factual responses
+        max_tokens: 1000,
+        response_format: { type: "json_object" }, // Force JSON output
+      });
+
+      const aiResponse = completion.choices[0]?.message?.content;
+
+      if (!aiResponse) {
+        throw new Error("Groq API returned empty response");
+      }
+
+      console.log("[INSIGHTS] Raw LLM response received, parsing JSON...");
+
+      // Parse and validate JSON response
+      let aiInsights;
+      try {
+        aiInsights = JSON.parse(aiResponse);
+
+        // Validate required fields exist
+        if (
+          !aiInsights.peak_hours_analysis ||
+          !aiInsights.revenue_prediction ||
+          !Array.isArray(aiInsights.recommendations)
+        ) {
+          throw new Error("LLM response missing required fields");
+        }
+      } catch (parseError: any) {
+        console.error(
+          "[INSIGHTS] Failed to parse LLM response:",
+          parseError.message,
+        );
+        console.error("[INSIGHTS] Raw response:", aiResponse.substring(0, 500));
+
+        // Fallback response if LLM returns malformed JSON
+        aiInsights = {
+          peak_hours_analysis:
+            "Analysis temporarily unavailable due to technical issues.",
+          revenue_prediction: "Prediction service experiencing difficulties.",
+          recommendations: [
+            {
+              priority: "medium",
+              title: "System Maintenance",
+              description:
+                "Our AI insights engine is being updated. Please check back soon.",
+            },
+          ],
+          inventory_alerts: [],
+        };
+      }
+
+      console.log("[INSIGHTS] Successfully generated AI insights");
+
+      res.status(200).json(aiInsights);
+    } catch (error: any) {
+      console.error("[INSIGHTS] Error generating insights:", error);
+
+      // Graceful error handling - don't crash the endpoint
+      res.status(500).json({
+        error: "Failed to generate AI insights",
+        details: error.message,
+        fallback: {
+          peak_hours_analysis: "Unable to analyze peak hours at this time.",
+          revenue_prediction: "Revenue prediction service unavailable.",
+          recommendations: [
+            {
+              priority: "high",
+              title: "Technical Issue",
+              description:
+                "Our AI insights engine encountered an error. Our team has been notified.",
+            },
+          ],
+          inventory_alerts: [],
+        },
+      });
     }
   });
 

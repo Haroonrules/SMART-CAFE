@@ -15,6 +15,16 @@ export function WineListScreen() {
   const [filter, setFilter] = useState<string>('All');
   const [selectedSizes, setSelectedSizes] = useState<Record<string, 'glass' | 'bottle'>>({});
 
+  // Dynamically generate wine categories from actual data
+  const wineCategories = ['All', ...Array.from(new Set(rawWines.map(wine => wine.type).filter(Boolean)))];
+  
+  const filteredItems = filter === 'All' 
+    ? wineItems 
+    : wineItems.filter(item => {
+        const originalWine = rawWines.find(w => w.id === item.id);
+        return originalWine?.type === filter;
+      });
+
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     {
@@ -154,8 +164,6 @@ export function WineListScreen() {
     addItem(cartItem);
   };
 
-  const filteredItems = wineItems.filter(item => filter === 'All' || item.tags?.includes(filter));
-
   return (
     <div className="max-w-screen-xl mx-auto px-6 py-8 md:py-12">
       {/* Wine Hero */}
@@ -293,7 +301,7 @@ export function WineListScreen() {
             <h2 className="text-4xl md:text-5xl font-headline text-primary">The Wine List</h2>
           </div>
           <div className="flex gap-3 overflow-x-auto pb-2 md:pb-0 no-scrollbar">
-            {['All', 'Red Wine', 'White Wine', 'Rosé', 'Sparkling'].map((cat) => (
+            {wineCategories.map((cat) => (
               <button 
                 key={cat}
                 onClick={() => setFilter(cat)}

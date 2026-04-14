@@ -20,15 +20,20 @@ export function ProfileScreen() {
       
       if (currentUser) {
         try {
-          // Check for admin custom claim
+          // Check for admin and kitchen custom claims
           const tokenResult = await currentUser.getIdTokenResult();
-          const isAdminUser = tokenResult.claims.admin === true;
-          setIsAdmin(isAdminUser);
+          const isAdminUser = !!tokenResult.claims.admin;
+          const isKitchenUser = !!tokenResult.claims.kitchen;
+          
+          // Set admin state for UI purposes (admin OR kitchen can access admin routes)
+          setIsAdmin(isAdminUser || isKitchenUser);
           
           console.log('=== CUSTOM CLAIMS CHECK ===');
           console.log('User UID:', currentUser.uid);
           console.log('Admin claim:', tokenResult.claims.admin);
+          console.log('Kitchen claim:', tokenResult.claims.kitchen);
           console.log('Is Admin:', isAdminUser);
+          console.log('Is Kitchen:', isKitchenUser);
           
           // Get or create user profile in Firestore
           const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
@@ -48,7 +53,7 @@ export function ProfileScreen() {
             const newProfile = {
               name: currentUser.displayName || 'Guest',
               email: currentUser.email || '',
-              role: isAdminUser ? 'admin' : 'customer',
+              role: isAdminUser ? 'admin' : (isKitchenUser ? 'kitchen' : 'customer'),
               avatar: currentUser.photoURL || '',
               memberSince: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
               totalOrders: 0,

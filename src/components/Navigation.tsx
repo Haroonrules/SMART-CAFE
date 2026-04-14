@@ -17,9 +17,16 @@ export function Navbar() {
       if (user) {
         try {
           const tokenResult = await user.getIdTokenResult();
-          // Check system_role claim (kitchen or admin)
-          const role = tokenResult.claims.system_role || 'admin';
+          
+          // Check custom claims - backend sets { kitchen: true } or { admin: true }
+          const isAdmin = !!tokenResult.claims.admin;
+          const isKitchen = !!tokenResult.claims.kitchen;
+          
+          // Determine role based on claims
+          const role = isAdmin ? 'admin' : (isKitchen ? 'kitchen' : 'admin');
           setUserRole(role);
+          
+          console.log('[NAVIGATION] User claims:', { isAdmin, isKitchen, role });
         } catch (error) {
           console.error('Error getting user role:', error);
           setUserRole('admin');
