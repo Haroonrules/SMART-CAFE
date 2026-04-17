@@ -37,10 +37,11 @@ export function AdminMenu() {
   }, []);
 
   const toggleAvailability = async (item: MenuItem) => {
-    // Optimistic UI update
+    // Optimistic UI update - set both is_available and is_active to false when marking as sold out
     const previousItems = [...menuItems];
+    const newStatus = !item.is_available;
     setMenuItems(items => items.map(i => 
-      i.id === item.id ? { ...i, is_available: !i.is_available } : i
+      i.id === item.id ? { ...i, is_available: newStatus, is_active: newStatus } : i
     ));
 
     try {
@@ -63,7 +64,8 @@ export function AdminMenu() {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          is_available: !item.is_available
+          is_available: newStatus,
+          is_active: newStatus
         })
       });
 
@@ -72,7 +74,7 @@ export function AdminMenu() {
         throw new Error(errorData.error || 'Failed to update availability');
       }
 
-      toast.success(`Marked as ${!item.is_available ? 'Available' : 'Sold Out'}`);
+      toast.success(newStatus ? 'Item activated and available' : 'Item deactivated and sold out');
     } catch (error: any) {
       // Revert on failure
       setMenuItems(previousItems);
@@ -240,13 +242,13 @@ export function AdminMenu() {
                   <button
                     onClick={() => toggleAvailability(item)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
-                      item.is_available 
+                      item.is_active && item.is_available
                         ? 'bg-green-100 text-green-700 hover:bg-green-200' 
                         : 'bg-red-100 text-red-700 hover:bg-red-200'
                     }`}
                   >
-                    {item.is_available ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                    {item.is_available ? 'Available' : 'Sold Out'}
+                    {item.is_active && item.is_available ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                    {item.is_active && item.is_available ? 'Available' : 'Sold Out'}
                   </button>
                 </td>
                 <td className="p-4 text-right">
