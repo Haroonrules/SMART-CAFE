@@ -365,133 +365,102 @@ export function MenuScreen() {
 
       {/* Concierge Section */}
       <section className="mb-20">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
-          <div className="lg:col-span-5 space-y-8">
-            <div className="space-y-2">
-              <h2 className="text-3xl font-headline text-primary">The Concierge</h2>
-              <p className="text-on-surface-variant font-body">Tell us how you're feeling, and we'll curate your experience.</p>
-            </div>
-            <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-secondary/20 to-tertiary/20 rounded-xl blur opacity-25 group-focus-within:opacity-100 transition duration-1000"></div>
-              <div className="relative bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-6 shadow-sm">
-                <textarea 
-                  value={moodInput}
-                  onChange={(e) => setMoodInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleConciergeSubmit();
-                    }
-                  }}
-                  className="w-full bg-transparent border-none focus:ring-0 text-lg font-body text-primary placeholder:text-stone-400 resize-none h-24" 
-                  placeholder="e.g., I'm feeling a bit tired and want something sweet..."
-                ></textarea>
-                <div className="flex justify-between items-center mt-4">
-                  <span className="text-[0.65rem] font-label text-stone-400 uppercase tracking-widest">
-                    {isThinking ? 'AI Concierge is Thinking...' : 'AI Concierge is Listening'}
-                  </span>
-                  <button 
-                    onClick={handleConciergeSubmit}
-                    disabled={isThinking || !moodInput.trim()}
-                    className="bg-primary text-white p-3 rounded-full hover:scale-105 transition-transform flex items-center justify-center disabled:opacity-50 disabled:hover:scale-100"
-                  >
-                    {isThinking ? <Loader2 size={20} className="animate-spin" /> : <Sparkles size={20} />}
-                  </button>
-                </div>
+        <div className="max-w-4xl mx-auto space-y-8">
+          <div className="space-y-2 text-center">
+            <h2 className="text-3xl font-headline text-primary">The Concierge</h2>
+            <p className="text-on-surface-variant font-body">Tell us how you're feeling, and we'll curate your experience.</p>
+          </div>
+          <div className="relative group">
+            <div className="absolute -inset-1 bg-gradient-to-r from-secondary/20 to-tertiary/20 rounded-xl blur opacity-25 group-focus-within:opacity-100 transition duration-1000"></div>
+            <div className="relative bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-6 shadow-sm">
+              <textarea 
+                value={moodInput}
+                onChange={(e) => setMoodInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleConciergeSubmit();
+                  }
+                }}
+                className="w-full bg-transparent border-none focus:ring-0 text-lg font-body text-primary placeholder:text-stone-400 resize-none h-24" 
+                placeholder="e.g., I'm feeling a bit tired and want something sweet..."
+              ></textarea>
+              <div className="flex justify-between items-center mt-4">
+                <span className="text-[0.65rem] font-label text-stone-400 uppercase tracking-widest">
+                  {isThinking ? 'AI Concierge is Thinking...' : 'AI Concierge is Listening'}
+                </span>
+                <button 
+                  onClick={handleConciergeSubmit}
+                  disabled={isThinking || !moodInput.trim()}
+                  className="bg-primary text-white p-3 rounded-full hover:scale-105 transition-transform flex items-center justify-center disabled:opacity-50 disabled:hover:scale-100"
+                >
+                  {isThinking ? <Loader2 size={20} className="animate-spin" /> : <Sparkles size={20} />}
+                </button>
               </div>
             </div>
-            <div className="space-y-6 max-h-[500px] overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-stone-200">
-              {chatHistory.map((chat) => (
-                <div key={chat.id} className={`flex gap-4 items-start ${chat.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                    chat.role === 'assistant' ? 'bg-tertiary-fixed' : 'bg-primary-container'
-                  }`}>
-                    {chat.role === 'assistant' ? (
-                      <Sparkles className="text-on-tertiary-fixed" size={20} />
-                    ) : (
-                      <ShoppingBag className="text-white" size={20} />
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-3 max-w-[85%]">
-                    <div className={`rounded-2xl p-4 shadow-sm ${
-                      chat.role === 'assistant' 
-                        ? 'bg-surface-container-high rounded-tl-none' 
-                        : 'bg-primary text-white rounded-tr-none'
-                    }`}>
-                      <p className={`leading-relaxed ${chat.role === 'assistant' ? 'font-headline italic text-primary' : 'font-body'}`}>
-                        {chat.text}
-                      </p>
-                    </div>
-
-                    {/* Recommendation Cards */}
-                    {chat.items && chat.items.length > 0 && (
-                      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
-                        {chat.items.map((item) => (
-                          <div key={item.id} className="min-w-[200px] bg-white rounded-xl overflow-hidden shadow-md border border-outline-variant/10 flex flex-col">
-                            <div className="h-32 overflow-hidden">
-                              <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            </div>
-                            <div className="p-4 flex-grow flex flex-col">
-                              <div className="flex justify-between items-start mb-1">
-                                <h4 className="font-headline text-sm text-primary line-clamp-1">{item.name}</h4>
-                                <span className="text-secondary font-bold text-xs">${(item.price || (item as any).price_glass || 0).toFixed(2)}</span>
-                              </div>
-                              <p className="text-[10px] text-on-surface-variant line-clamp-2 mb-3 flex-grow">{item.description}</p>
-                              <button 
-                                onClick={() => openCustomization(item)}
-                                className="w-full py-2 rounded-lg bg-secondary text-white text-xs font-semibold hover:scale-[1.02] transition-transform flex items-center justify-center gap-1"
-                              >
-                                <Plus size={12} />
-                                Customize
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {isThinking && (
-                <div className="flex gap-4 items-start">
-                  <div className="w-10 h-10 rounded-full bg-tertiary-fixed flex items-center justify-center shrink-0 animate-pulse">
-                    <Sparkles className="text-on-tertiary-fixed" size={20} />
-                  </div>
-                  <div className="bg-surface-container-high rounded-2xl rounded-tl-none p-4">
-                    <Loader2 size={20} className="animate-spin text-primary" />
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
-
-          <div className="lg:col-span-7">
-            <div className="flex flex-col md:flex-row gap-6">
-              {menuItems.slice(0, 2).map(item => (
-                <div key={item.id} className="flex-1 group bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-500 border border-outline-variant/10">
-                  <div className="h-48 overflow-hidden relative">
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" referrerPolicy="no-referrer" />
-                    {item.badge && (
-                      <div className="absolute top-4 left-4 bg-tertiary text-white text-[0.6rem] font-label uppercase tracking-widest px-2 py-1 rounded">{item.badge}</div>
-                    )}
-                  </div>
-                  <div className="p-6">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-headline text-xl text-primary">{item.name}</h3>
-                      <span className="text-secondary font-bold">${item.price.toFixed(2)}</span>
-                    </div>
-                    <p className="text-sm text-on-surface-variant line-clamp-2 mb-6">{item.description}</p>
-                    <button 
-                      onClick={() => openCustomization(item)}
-                      className="w-full py-2.5 rounded-lg border border-secondary text-secondary font-semibold hover:bg-secondary hover:text-white transition-colors flex items-center justify-center gap-2"
-                    >
-                      <Plus size={14} />
-                      Customize
-                    </button>
-                  </div>
+          <div className="space-y-6 max-h-[600px] overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-stone-200">
+            {chatHistory.map((chat) => (
+              <div key={chat.id} className={`flex gap-4 items-start ${chat.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                  chat.role === 'assistant' ? 'bg-tertiary-fixed' : 'bg-primary-container'
+                }`}>
+                  {chat.role === 'assistant' ? (
+                    <Sparkles className="text-on-tertiary-fixed" size={20} />
+                  ) : (
+                    <ShoppingBag className="text-white" size={20} />
+                  )}
                 </div>
-              ))}
-            </div>
+                <div className="flex flex-col gap-3 max-w-[85%]">
+                  <div className={`rounded-2xl p-4 shadow-sm ${
+                    chat.role === 'assistant' 
+                      ? 'bg-surface-container-high rounded-tl-none' 
+                      : 'bg-primary text-white rounded-tr-none'
+                  }`}>
+                    <p className={`leading-relaxed ${chat.role === 'assistant' ? 'font-headline italic text-primary' : 'font-body'}`}>
+                      {chat.text}
+                    </p>
+                  </div>
+
+                  {/* Recommendation Cards */}
+                  {chat.items && chat.items.length > 0 && (
+                    <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+                      {chat.items.map((item) => (
+                        <div key={item.id} className="min-w-[200px] bg-white rounded-xl overflow-hidden shadow-md border border-outline-variant/10 flex flex-col">
+                          <div className="h-32 overflow-hidden">
+                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          </div>
+                          <div className="p-4 flex-grow flex flex-col">
+                            <div className="flex justify-between items-start mb-1">
+                              <h4 className="font-headline text-sm text-primary line-clamp-1">{item.name}</h4>
+                              <span className="text-secondary font-bold text-xs">${(item.price || (item as any).price_glass || 0).toFixed(2)}</span>
+                            </div>
+                            <p className="text-[10px] text-on-surface-variant line-clamp-2 mb-3 flex-grow">{item.description}</p>
+                            <button 
+                              onClick={() => openCustomization(item)}
+                              className="w-full py-2 rounded-lg bg-secondary text-white text-xs font-semibold hover:scale-[1.02] transition-transform flex items-center justify-center gap-1"
+                            >
+                              <Plus size={12} />
+                              Customize
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {isThinking && (
+              <div className="flex gap-4 items-start">
+                <div className="w-10 h-10 rounded-full bg-tertiary-fixed flex items-center justify-center shrink-0 animate-pulse">
+                  <Sparkles className="text-on-tertiary-fixed" size={20} />
+                </div>
+                <div className="bg-surface-container-high rounded-2xl rounded-tl-none p-4">
+                  <Loader2 size={20} className="animate-spin text-primary" />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>

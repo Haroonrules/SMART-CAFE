@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Built Firebase functions
+lib/
+
+# Debug logs
+*.log
+
+# Runtime env variables
+.runtimeconfig.json
+
+# Local Firebase emulator data
+.firebase/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo

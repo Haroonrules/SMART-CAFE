@@ -44,9 +44,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "joimifin@gmail.com" && request.auth.token.email_verified == true));
+      return isAuthenticated() && request.auth.token.admin == true;
     }
 
     function isOwner(userId) {
@@ -119,6 +117,26 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidAuditLog(request.resource.data);
       allow update: if false; // Audit logs should be immutable
       allow delete: if false;
+    }
+
+    // ===============================================================
+    // Statistics Collection (for aggregated sales data)
+    // ===============================================================
+    // Documents: daily_YYYYMMDD, monthly_YYYYMM, weekly_YYYY_WNN
+    // Fields:
+    //   - period: string ('daily', 'monthly', 'weekly')
+    //   - totalTurnover: number
+    //   - totalOrders: number
+    //   - cancelledOrders: number
+    //   - bestSellers: map
+    //   - itemSalesCount: map
+    //   - lastUpdated: timestamp
+    //
+    match /statistics/{statId} {
+      // Authenticated users can read statistics (for admin dashboard)
+      allow read: if isAdmin();
+      // Only Cloud Functions can write (using Admin SDK)
+      allow write: if false;
     }
   }
 }
