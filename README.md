@@ -1,6 +1,5 @@
 # SMART-CAFE
 A CAFE SELF ORDERING APPLICATON POWERED BY CONVERSATIONAL AI 
->>>>>>> origin/main
 # Smart Cafe - AI-Powered Self Ordering Application
 
 A curated, AI-powered digital concierge experience for a high-end bistro. A CAFE SELF ORDERING APPLICATION POWERED BY CONVERSATIONAL AI.
@@ -69,7 +68,5 @@ npm run preview
 - **Backend**: Express.js, Groq SDK
 - **Database**: Firebase Firestore
 - **AI**: Groq Llama 3.1 8B Instant
-=======
 # SMART-CAFE
 A CAFE SELF ORDERING APPLICATON POWERED BY CONVERSATIONAL AI 
->>>>>>> origin/main
